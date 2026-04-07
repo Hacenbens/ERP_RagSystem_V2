@@ -1,0 +1,40 @@
+# prometheus.yml — Prometheus scrape configuration for ERP Agentic RAG
+#
+# Prometheus UI: http://localhost:9090
+# Target status: http://localhost:9090/targets
+#
+# To reload config without restart:
+#   curl -X POST http://localhost:9090/-/reload
+
+global:
+  scrape_interval: 15s       # default scrape frequency
+  evaluation_interval: 15s   # rule evaluation frequency
+  scrape_timeout: 10s
+
+  external_labels:
+    environment: "local"
+    project: "erp_rag"
+
+# ---------------------------------------------------------------------------
+# Scrape targets
+# ---------------------------------------------------------------------------
+scrape_configs:
+
+  # FastAPI application — exposes erp_rag_* metrics
+  - job_name: "erp_rag_app"
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "app:8000"
+        labels:
+          service: "api"
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - "localhost:9090"
+        labels:
+          service: "prometheus"
