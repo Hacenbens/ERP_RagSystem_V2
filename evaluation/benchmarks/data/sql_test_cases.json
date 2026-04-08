@@ -1,0 +1,142 @@
+[
+  {
+    "id": "sql_001",
+    "nl_query": "Show all open sales orders for tenant ACME in the last 30 days",
+    "expected_patterns": ["SELECT", "sales_orders", "tenant_id", "status", "created_at"],
+    "must_have_tenant_filter": true,
+    "description": "Basic sales order listing with tenant and date filter"
+  },
+  {
+    "id": "sql_002",
+    "nl_query": "What is the total revenue for product SKU-1042 this quarter for tenant FERZA?",
+    "expected_patterns": ["SELECT", "SUM", "revenue", "sku", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Aggregation query on revenue by SKU"
+  },
+  {
+    "id": "sql_003",
+    "nl_query": "List all suppliers with outstanding invoices greater than 100000 DZD for tenant FERZA",
+    "expected_patterns": ["SELECT", "suppliers", "invoices", "amount", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Supplier invoice query with amount threshold"
+  },
+  {
+    "id": "sql_004",
+    "nl_query": "Show inventory levels for warehouse WH-001 of tenant ACME",
+    "expected_patterns": ["SELECT", "inventory", "warehouse_id", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Inventory query filtered by warehouse"
+  },
+  {
+    "id": "sql_005",
+    "nl_query": "How many employees are in the finance department for tenant FERZA?",
+    "expected_patterns": ["SELECT", "COUNT", "employees", "department", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "HR headcount query by department"
+  },
+  {
+    "id": "sql_006",
+    "nl_query": "Get all purchase orders pending approval for tenant ACME",
+    "expected_patterns": ["SELECT", "purchase_orders", "status", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Purchase order approval queue"
+  },
+  {
+    "id": "sql_007",
+    "nl_query": "Show top 10 customers by order value for tenant FERZA in 2025",
+    "expected_patterns": ["SELECT", "customers", "SUM", "ORDER BY", "LIMIT", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Top N customer ranking"
+  },
+  {
+    "id": "sql_008",
+    "nl_query": "What are the overdue accounts receivable for tenant ACME?",
+    "expected_patterns": ["SELECT", "accounts_receivable", "due_date", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Accounts receivable overdue report"
+  },
+  {
+    "id": "sql_009",
+    "nl_query": "List all active contracts expiring in the next 60 days for tenant FERZA",
+    "expected_patterns": ["SELECT", "contracts", "expiry_date", "status", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Contract expiry alert query"
+  },
+  {
+    "id": "sql_010",
+    "nl_query": "Show monthly sales trend for tenant ACME for the past 6 months",
+    "expected_patterns": ["SELECT", "DATE_TRUNC", "SUM", "sales", "GROUP BY", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Time-series aggregation for sales trend"
+  },
+  {
+    "id": "sql_011",
+    "nl_query": "Which products have stock below reorder level for tenant FERZA?",
+    "expected_patterns": ["SELECT", "products", "stock_quantity", "reorder_level", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Low stock alert query"
+  },
+  {
+    "id": "sql_012",
+    "nl_query": "Get payroll summary for March 2025 for tenant ACME",
+    "expected_patterns": ["SELECT", "payroll", "SUM", "month", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Payroll monthly aggregation"
+  },
+  {
+    "id": "sql_013",
+    "nl_query": "Show all failed quality control checks this week for tenant FERZA",
+    "expected_patterns": ["SELECT", "quality_checks", "status", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "QC failure report"
+  },
+  {
+    "id": "sql_014",
+    "nl_query": "List all VAT transactions above 50000 DZD for tenant ACME in Q1 2025",
+    "expected_patterns": ["SELECT", "vat", "amount", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "VAT transaction audit query"
+  },
+  {
+    "id": "sql_015",
+    "nl_query": "Show asset depreciation schedule for tenant FERZA fixed assets",
+    "expected_patterns": ["SELECT", "assets", "depreciation", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Fixed asset depreciation report"
+  },
+  {
+    "id": "sql_016",
+    "nl_query": "How many production batches were completed last week for tenant ACME?",
+    "expected_patterns": ["SELECT", "COUNT", "production_batches", "completed_at", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Production batch count"
+  },
+  {
+    "id": "sql_017",
+    "nl_query": "Get all customer returns and refunds for tenant FERZA this month",
+    "expected_patterns": ["SELECT", "returns", "refunds", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Returns and refunds report"
+  },
+  {
+    "id": "sql_018",
+    "nl_query": "Show budget vs actual spending per department for tenant ACME in 2025",
+    "expected_patterns": ["SELECT", "budget", "actual", "department", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Budget variance analysis"
+  },
+  {
+    "id": "sql_019",
+    "nl_query": "List all employee leave balances for tenant FERZA as of today",
+    "expected_patterns": ["SELECT", "leave_balances", "employees", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "HR leave balance report"
+  },
+  {
+    "id": "sql_020",
+    "nl_query": "Show logistics shipments delayed more than 3 days for tenant ACME",
+    "expected_patterns": ["SELECT", "shipments", "delivery_date", "expected_date", "tenant_id"],
+    "must_have_tenant_filter": true,
+    "description": "Delayed shipment report"
+  }
+]

@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, "sprint-*/"]
+  pull_request:
+    branches: [develop]
+
+env:
+  PYTHON_VERSION: "3.13"
+  SQL_SUCCESS_MIN: "0.95"
+  HALLUCINATION_MAX: "0.05"
+  RAG_PRECISION_MIN: "0.70"
+  # Real secrets injected from GitHub repository secrets — never hardcode
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  ERP_PG_HOST: ${{ secrets.ERP_PG_HOST }}
+  ERP_PG_PORT: ${{ secrets.ERP_PG_PORT }}
+  ERP_PG_DATABASE: ${{ secrets.ERP_PG_DATABASE }}
+  ERP_PG_USER: ${{ secrets.ERP_PG_USER }}
+  ERP_PG_PASSWORD: ${{ secrets.ERP_PG_PASSWORD }}
+
+jobs:
+  lint:
+    name: Lint & type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ruff lint
+        run: ruff check src/ evaluation/ helpers/
+
+      - name: Type check (mypy)
+        run: mypy src/ evaluation/ helpers/ --ignore-missing-imports
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest src/tests/unit/ -v \
+            --cov=src \
+            --cov=evaluation \
+            --cov=helpers \
+            --cov-report=term-missing \
+            --cov-fail-under=80
+
+  sql-benchmark:
+    name: SQL benchmark gate
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run SQL benchmark
+        run: python evaluation/benchmarks/sql_benchmark.py || exit 1
+
+  rag-benchmark:
+    name: RAG benchmark gate
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run RAG benchmark
+        run: python evaluation/benchmarks/rag_benchmark.py || exit 1
