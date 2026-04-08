@@ -1,6 +1,9 @@
 {
-  "current_sprint": 1,
-  "completed_sprints": [],
+  "current_sprint": null,
+  "completed_sprints": [
+    1,
+    2
+  ],
   "release": null,
   "started_at": "2026-04-08"
 }

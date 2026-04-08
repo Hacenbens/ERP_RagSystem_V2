@@ -8,6 +8,29 @@ Each sprint gets one entry. Entries are added by the Committer agent at sprint c
 
 ---
 
+## [sprint-2-done] — 2026-04-08
+
+### Added
+- feat(evaluation): `evaluation/__init__.py` — module scaffold
+- feat(evaluation): `evaluation/benchmarks/sql_benchmark.py` — 20 ERP NL→SQL test cases; CI-compatible (exit 0/1); offline stub + real pipeline hook; reports success_rate vs `SQL_SUCCESS_MIN` threshold
+- feat(evaluation): `evaluation/benchmarks/data/sql_test_cases.json` — 20 committed test cases covering sales, inventory, HR, finance, logistics, tax domains; all require `tenant_id` filter
+- feat(evaluation): `evaluation/metrics/hallucination_scorer.py` — LLM-as-judge scorer; returns `grounding_score` in [0.0, 1.0]; heuristic fallback for offline/test use; `is_acceptable` flag against `HALLUCINATION_MAX`
+- feat(evaluation): `evaluation/benchmarks/rag_benchmark.py` — 15 retrieval test cases; precision@5 reporting; CI-compatible exit codes
+- feat(evaluation): `evaluation/benchmarks/data/rag_test_cases.json` — 15 committed retrieval cases covering SOPs, BPMN processes, tax circulars
+- feat(config): `helpers/config.py` — central threshold config (`SQL_SUCCESS_MIN=0.95`, `HALLUCINATION_MAX=0.05`, `RAG_PRECISION_MIN=0.70`); all overridable via env vars
+- feat(ci): `.github/workflows/ci.yml` — lint (ruff) + type check (mypy) + unit tests (coverage ≥80%) + SQL benchmark gate + RAG benchmark gate on every PR to develop
+- test(evaluation): `src/tests/unit/test_evaluation.py` — 51 unit tests covering all benchmark and scorer components; all green
+
+### Definition of Done — Sprint 2 ✓
+- `sql_benchmark.py` runs 20 queries — reports pass/fail per query and overall `success_rate`
+- CI fails PR if `sql_success_rate < 0.95` or `hallucination_rate > 0.05`
+- `hallucination_scorer.py` returns `grounding_score` between 0.0 and 1.0 for any answer/context pair
+- `rag_benchmark.py` runs 15 retrieval cases and reports precision@5
+- All benchmark scripts exit with code 0 on pass, 1 on fail (CI-compatible)
+- Sprint tag `sprint-2-done` pushed, CHANGELOG updated
+
+---
+
 ## [sprint-1-done] — 2026-04-08
 
 ### Added
