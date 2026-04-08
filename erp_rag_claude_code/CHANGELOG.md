@@ -8,6 +8,32 @@ Each sprint gets one entry. Entries are added by the Committer agent at sprint c
 
 ---
 
+## [sprint-3-done] — 2026-04-09
+
+### Added
+- feat(di): `src/infrastructure/di/container.py` — `DIContainer` with `validate()` that raises `MissingBindingError` listing all unbound required ports; app refuses to start if validation fails
+- feat(di): `src/infrastructure/di/factory.py` — `build_container()` wires JWT + UserRepo + AuthUseCase; calls `validate()` before returning
+- feat(auth): `src/infrastructure/auth/jwt_handler.py` — RS256 JWT issuance + verification; `TokenExpiredError`, `TokenInvalidError`, `TokenAlgorithmError` with clear messages
+- feat(auth): `src/infrastructure/auth/user_repository.py` — `InMemoryUserRepository` with sha256_crypt password hashing; `create`, `verify_password`, `save_reset_token`, `reset_password`
+- feat(auth): `src/use_cases/auth_user.py` — `AuthUseCase` orchestrating register, login, request-password-reset, reset-password flows
+- feat(routes): `src/routes/auth.py` — `POST /auth/register`, `/auth/login`, `/auth/request-password-reset`, `/auth/reset-password`
+- feat(middleware): `src/middleware/AuthMiddleware.py` — upgraded from Sprint 1 stub to full RS256 verification; injects `user_id`, `role`, `tenant_id` into `request.state`
+- test(fixtures): `src/tests/fixtures/jwt_fixtures.py` — ephemeral RSA key pair generation; no real IdP required
+- test(integration): `src/tests/integration/test_auth_flow.py` — 21 tests: register→login→use token happy path + all 401 cases (expired, missing, tampered, wrong algo) + full password reset flow
+- test(integration): `src/tests/integration/test_rbac.py` — 18 tests: all 4 roles (ADMIN/MANAGER/ANALYST/VIEWER) × all route categories; privilege isolation verified
+- test(unit): `src/tests/unit/test_di_factory.py` — 16 tests: container validation, factory wiring, AuthUseCase with mocked dependencies
+
+### Definition of Done — Sprint 3 ✓
+- `container.validate()` called at startup — app refuses to start with missing port binding
+- Full auth integration test: `POST /auth/login` returns JWT → `GET /api/erp/query` with JWT → 200
+- All 4 RBAC roles tested: each role only accesses permitted routes (403 on others)
+- All token failure cases return 401 with clear error message
+- DI factory unit test: use case constructed with mocked dependencies — no real DB needed
+- 186 tests total — all green
+- Sprint tag `sprint-3-done` pushed, CHANGELOG updated
+
+---
+
 ## [sprint-2-done] — 2026-04-08
 
 ### Added
