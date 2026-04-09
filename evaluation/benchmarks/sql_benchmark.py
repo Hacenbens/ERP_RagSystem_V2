@@ -78,7 +78,7 @@ def generate_sql(nl_query: str) -> str:
     try:
         from src.infrastructure.erp.query_generator import QueryGenerator  # type: ignore
         generator = QueryGenerator()
-        return generator.generate(nl_query)
+        return generator.generate(nl_query).raw_sql
     except ImportError:
         pass
 
