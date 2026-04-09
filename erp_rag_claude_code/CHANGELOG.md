@@ -8,6 +8,31 @@ Each sprint gets one entry. Entries are added by the Committer agent at sprint c
 
 ---
 
+## [sprint-4-done] — 2026-04-09
+
+### Added
+- feat(sql): `src/infrastructure/erp/query_generator.py` — Stage 1: NL→SQL with offline fallback + OpenAI hook; `SQL_STAGE1_LATENCY` Prometheus metric wired
+- feat(sql): `src/infrastructure/erp/query_validator.py` — Stage 2: `ValidationReport`; blocks non-SELECT, 10 injection patterns, missing `tenant_id`; `SQL_STAGE2_ERRORS` metric wired
+- feat(sql): `src/infrastructure/erp/query_executor.py` — Stage 3: `ExecutionResult` with unique `query_id`; raises `TenantFilterMissingError` when `has_tenant_filter=False`; `SQL_STAGE3_ROWS` metric wired
+- feat(sql): `src/infrastructure/erp/query_log_repository.py` — `InMemoryQueryLogRepository` + `MongoQueryLogRepository`; every `ExecutionResult` logged
+- fix(evaluation): `evaluation/benchmarks/sql_benchmark.py` — fix `generate_sql()` to extract `.raw_sql` from `QueryGenerator` result
+- test(fixtures): `src/tests/fixtures/.env.test` + `seed_erp_test.sql` — reproducible ERP test DB seed covering FERZA and ACME tenants
+- test(unit): `src/tests/unit/test_sql_validator.py` — 44 tests covering all Stage 2 validation rules
+- test(integration): `src/tests/integration/test_sql_generator.py` — 10 NL queries verified for SELECT, tenant_id filter, table mapping, metrics
+- test(integration): `src/tests/integration/test_sql_pipeline.py` — tenant guard: `TenantFilterMissingError` raised before Stage 3; counter increments verified
+- test(integration): `src/tests/integration/test_sql_executor.py` — Stage 3 execution: `query_id` uniqueness, `QueryLogRepository` logging, `InMemoryExecutor` table patterns
+- test(integration): `src/tests/integration/test_sql_e2e.py` — full 3-stage E2E: 5 NL queries × NL→SQL→Validate→Execute; Prometheus metrics at each stage
+
+### Definition of Done — Sprint 4 ✓
+- `ValidationReport.has_tenant_filter=False` → `TenantFilterMissingError` — Stage 3 never executes
+- All non-SELECT SQL (INSERT/UPDATE/DELETE/DROP/DDL) caught by Stage 2 — Stage 3 never reached
+- Every `ExecutionResult` has a unique `query_id` logged to `QueryLogRepository`
+- SQL pipeline metrics visible: `sql_stage1_latency`, `sql_stage2_errors`, `sql_stage3_rows`
+- 321 tests total — all green
+- Sprint tag `sprint-4-done` pushed, CHANGELOG updated
+
+---
+
 ## [sprint-3-done] — 2026-04-09
 
 ### Added
