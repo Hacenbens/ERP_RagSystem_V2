@@ -1,17 +1,14 @@
 """
-RateLimitMiddleware — per-user and per-IP request throttling (Sprint 1 stub).
+RateLimitMiddleware — per-user and per-IP request throttling.
 
 Position in stack: THIRD (after AuthMiddleware).
 
-Target limits (Sprint 5):
-    60  requests / minute  per authenticated user_id
-    200 requests / minute  per client IP
+Enforced limits:
+    60  requests / minute  per authenticated user_id  → 429
+    200 requests / minute  per client IP              → 429
 
-Sprint 1 stub behaviour:
-    - Passes all requests through (no blocking)
-    - Increments MIDDLEWARE_VIOLATIONS counter when a limit WOULD be exceeded
-      (uses simple in-process counter — not distributed, resets on restart)
-    - Records the throttle label for future Prometheus alerting
+Uses a simple sliding-window counter (in-process, resets on restart).
+Distributed enforcement (Redis) is a Sprint 6+ concern.
 """
 from __future__ import annotations
 
@@ -21,7 +18,7 @@ from typing import Awaitable, Callable
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from src.observability.prometheus_metrics import MIDDLEWARE_VIOLATIONS
 from src.observability.structured_logger import get_logger
@@ -58,9 +55,8 @@ _ip_counter = _WindowCounter()
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Throttle requests by user_id and client IP.
 
-    Sprint 1: stub — logs violations and increments Prometheus counter
-    but does NOT block requests (returns 200).
-    Sprint 5: will return 429 when limits are exceeded.
+    Returns 429 with a Retry-After header when a limit is exceeded.
+    User limit is checked first; IP limit second.
     """
 
     async def dispatch(
@@ -68,7 +64,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        """Check rate counters; in Sprint 1 always passes through."""
+        """Check rate counters; return 429 when a limit is exceeded."""
         user_id: str = getattr(request.state, "user_id", "") or (
             request.headers.get("x-user-id", "anonymous")
         )
@@ -78,8 +74,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
         user_count = _user_counter.increment(user_id)
-        ip_count = _ip_counter.increment(client_ip)
-
         if user_count > _USER_LIMIT_PER_MIN:
             MIDDLEWARE_VIOLATIONS.labels(middleware="rate_limit_user").inc()
             logger.warning(
@@ -87,14 +81,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 user_id=user_id,
                 count=user_count,
                 limit=_USER_LIMIT_PER_MIN,
-                stub=True,
             )
-            # Sprint 5: uncomment to enforce
-            # return JSONResponse(
-            #     status_code=429,
-            #     content={"detail": "Rate limit exceeded (user)."},
-            # )
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded (user)."},
+                headers={"Retry-After": str(_WINDOW_SECONDS)},
+            )
 
+        ip_count = _ip_counter.increment(client_ip)
         if ip_count > _IP_LIMIT_PER_MIN:
             MIDDLEWARE_VIOLATIONS.labels(middleware="rate_limit_ip").inc()
             logger.warning(
@@ -102,13 +96,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 client_ip=client_ip,
                 count=ip_count,
                 limit=_IP_LIMIT_PER_MIN,
-                stub=True,
             )
-            # Sprint 5: uncomment to enforce
-            # return JSONResponse(
-            #     status_code=429,
-            #     content={"detail": "Rate limit exceeded (IP)."},
-            # )
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded (IP)."},
+                headers={"Retry-After": str(_WINDOW_SECONDS)},
+            )
 
         return await call_next(request)
 
