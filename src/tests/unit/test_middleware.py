@@ -347,9 +347,9 @@ class TestRBACMiddleware:
         return TestClient(app, raise_server_exceptions=False)
 
     def test_rbac_admin_role_accesses_admin_route(self, client_with_admin_role):
-        """Real RS256 token with role=ADMIN should pass admin route."""
+        """Real RS256 token with role=SUPER_ADMIN should pass admin route."""
         from src.tests.fixtures.jwt_fixtures import make_valid_token
-        token = make_valid_token(self._jwt_handler, role="ADMIN")
+        token = make_valid_token(self._jwt_handler, role="SUPER_ADMIN")
         r = client_with_admin_role.get(
             "/admin/jobs", headers={"Authorization": f"Bearer {token}"}
         )

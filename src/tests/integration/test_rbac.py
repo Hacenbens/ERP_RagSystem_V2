@@ -1,9 +1,10 @@
 """
-Integration tests — RBAC enforcement (Sprint 3)
-Tests all 4 roles: ADMIN / MANAGER / ANALYST / VIEWER
-Each role is tested on each route category:
-  - /api/erp/query  (all authenticated roles)
-  - /admin/status   (ADMIN only → 403 for others)
+Integration tests — RBAC enforcement (Sprint 5 update).
+
+Role set updated to domain enums (source of truth § 8.1):
+  SQL-capable roles: all except REPORTING_ANALYST
+  Admin-only:        SUPER_ADMIN
+  RAG-only role:     REPORTING_ANALYST (blocked from /api/erp/query SQL path)
 """
 from __future__ import annotations
 
@@ -15,8 +16,17 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
+from src.domain.user_role import UserRole
 from src.tests.conftest import build_test_app
 from src.tests.fixtures.jwt_fixtures import make_jwt_handler, make_valid_token
+
+# ---------------------------------------------------------------------------
+# Role groups (derived from domain enum — never hard-coded)
+# ---------------------------------------------------------------------------
+
+_ALL_ROLES       = [r.value for r in UserRole]
+_SQL_ROLES       = [r.value for r in UserRole if r != UserRole.REPORTING_ANALYST]
+_NON_ADMIN_ROLES = [r.value for r in UserRole if r != UserRole.SUPER_ADMIN]
 
 
 # ---------------------------------------------------------------------------
@@ -49,19 +59,26 @@ def _make_token(jwt_handler, role: str, tenant_id: str = "acme") -> str:
 
 
 # ---------------------------------------------------------------------------
-# /api/erp/query — all authenticated roles should have access
+# /api/erp/query — SQL-capable roles only
 # ---------------------------------------------------------------------------
 
 class TestERPQueryAccess:
-    @pytest.mark.parametrize("role", ["ADMIN", "MANAGER", "ANALYST", "VIEWER"])
-    def test_all_roles_can_access_erp_query(self, client, jwt_handler, role):
+    @pytest.mark.parametrize("role", _SQL_ROLES)
+    def test_sql_capable_roles_can_access_erp_query(self, client, jwt_handler, role):
         token = _make_token(jwt_handler, role)
         resp = client.get("/api/erp/query", headers=_auth_header(token))
         assert resp.status_code == 200, (
-            f"Role {role} should have access to /api/erp/query, got {resp.status_code}"
+            f"Role {role} should have SQL access to /api/erp/query, got {resp.status_code}"
         )
 
-    @pytest.mark.parametrize("role", ["ADMIN", "MANAGER", "ANALYST", "VIEWER"])
+    def test_reporting_analyst_blocked_on_sql_path(self, client, jwt_handler):
+        """REPORTING_ANALYST is a RAG-only role — SQL path must return 403."""
+        token = _make_token(jwt_handler, UserRole.REPORTING_ANALYST.value)
+        resp = client.get("/api/erp/query", headers=_auth_header(token))
+        assert resp.status_code == 403
+        assert "detail" in resp.json()
+
+    @pytest.mark.parametrize("role", _SQL_ROLES)
     def test_role_injected_into_response(self, client, jwt_handler, role):
         token = _make_token(jwt_handler, role)
         resp = client.get("/api/erp/query", headers=_auth_header(token))
@@ -74,24 +91,24 @@ class TestERPQueryAccess:
 
 
 # ---------------------------------------------------------------------------
-# /admin/status — ADMIN only
+# /admin/status — SUPER_ADMIN only
 # ---------------------------------------------------------------------------
 
 class TestAdminRouteAccess:
-    def test_admin_can_access_admin_route(self, client, jwt_handler):
-        token = _make_token(jwt_handler, "ADMIN")
+    def test_super_admin_can_access_admin_route(self, client, jwt_handler):
+        token = _make_token(jwt_handler, UserRole.SUPER_ADMIN.value)
         resp = client.get("/admin/status", headers=_auth_header(token))
         assert resp.status_code == 200
 
-    @pytest.mark.parametrize("role", ["MANAGER", "ANALYST", "VIEWER"])
-    def test_non_admin_roles_get_403_on_admin_route(self, client, jwt_handler, role):
+    @pytest.mark.parametrize("role", _NON_ADMIN_ROLES)
+    def test_non_super_admin_roles_get_403_on_admin_route(self, client, jwt_handler, role):
         token = _make_token(jwt_handler, role)
         resp = client.get("/admin/status", headers=_auth_header(token))
         assert resp.status_code == 403, (
             f"Role {role} should be blocked from /admin/status, got {resp.status_code}"
         )
 
-    @pytest.mark.parametrize("role", ["MANAGER", "ANALYST", "VIEWER"])
+    @pytest.mark.parametrize("role", _NON_ADMIN_ROLES)
     def test_403_response_has_detail(self, client, jwt_handler, role):
         token = _make_token(jwt_handler, role)
         resp = client.get("/admin/status", headers=_auth_header(token))
@@ -104,40 +121,38 @@ class TestAdminRouteAccess:
 
 
 # ---------------------------------------------------------------------------
-# Role ordering sanity — privilege escalation check
+# Role isolation — privilege escalation sanity checks
 # ---------------------------------------------------------------------------
 
 class TestRoleIsolation:
-    def test_viewer_token_cannot_become_admin(self, client, jwt_handler):
-        """A VIEWER token must never grant ADMIN access to admin routes."""
-        viewer_token = _make_token(jwt_handler, "VIEWER")
-        resp = client.get("/admin/status", headers=_auth_header(viewer_token))
+    def test_reporting_analyst_cannot_reach_admin(self, client, jwt_handler):
+        token = _make_token(jwt_handler, UserRole.REPORTING_ANALYST.value)
+        resp = client.get("/admin/status", headers=_auth_header(token))
         assert resp.status_code == 403
 
-    def test_analyst_token_cannot_access_admin(self, client, jwt_handler):
-        analyst_token = _make_token(jwt_handler, "ANALYST")
-        resp = client.get("/admin/status", headers=_auth_header(analyst_token))
+    def test_finance_manager_cannot_reach_admin(self, client, jwt_handler):
+        token = _make_token(jwt_handler, UserRole.FINANCE_MANAGER.value)
+        resp = client.get("/admin/status", headers=_auth_header(token))
         assert resp.status_code == 403
 
-    def test_manager_token_cannot_access_admin(self, client, jwt_handler):
-        manager_token = _make_token(jwt_handler, "MANAGER")
-        resp = client.get("/admin/status", headers=_auth_header(manager_token))
+    def test_product_manager_cannot_reach_admin(self, client, jwt_handler):
+        token = _make_token(jwt_handler, UserRole.PRODUCT_MANAGER.value)
+        resp = client.get("/admin/status", headers=_auth_header(token))
         assert resp.status_code == 403
 
     def test_different_tenant_ids_are_isolated_in_claims(self, client, jwt_handler):
         """Tokens for different tenants carry different tenant_id in state."""
-        token_ferza = make_valid_token(jwt_handler, role="ADMIN", tenant_id="ferza")
-        token_acme = make_valid_token(jwt_handler, role="ADMIN", tenant_id="acme")
+        token_ferza = make_valid_token(jwt_handler, role=UserRole.SUPER_ADMIN.value, tenant_id="ferza")
+        token_acme  = make_valid_token(jwt_handler, role=UserRole.SUPER_ADMIN.value, tenant_id="acme")
 
         resp_ferza = client.get("/api/erp/query", headers=_auth_header(token_ferza))
-        resp_acme = client.get("/api/erp/query", headers=_auth_header(token_acme))
+        resp_acme  = client.get("/api/erp/query", headers=_auth_header(token_acme))
 
         assert resp_ferza.status_code == 200
         assert resp_acme.status_code == 200
-        # Both succeed — tenant isolation at SQL level is enforced in Sprint 4
 
-    @pytest.mark.parametrize("role", ["ADMIN", "MANAGER", "ANALYST", "VIEWER"])
-    def test_public_routes_accessible_without_role(self, client, role):
+    @pytest.mark.parametrize("role", _ALL_ROLES)
+    def test_public_health_route_accessible_without_role(self, client, role):
         """Health endpoint requires no authentication regardless of role."""
         resp = client.get("/health")
         assert resp.status_code == 200
