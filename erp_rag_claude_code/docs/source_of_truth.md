@@ -122,7 +122,7 @@ Old Path (Actual) |  | New Path (Document) | Notes
 src/infrastructure/erp/query_generator.py | → | infrastructure/erp/query_generator.py | Stage 1 — NL → SQL string (LLM call)
 src/infrastructure/erp/query_validator.py | → | infrastructure/erp/query_validator.py | Stage 2 — SQL → ValidationReport (sqlglot + tenant check)
 src/infrastructure/erp/query_executor.py | → | infrastructure/erp/query_executor.py | Stage 3 — ValidationReport → ExecutionResult (asyncpg)
-src/infrastructure/erp/erp_rbac_policy.py | → | infrastructure/erp/erp_rbac_policy.py | NEW — ERP module permission matrix
+src/infrastructure/auth/erp_rbac_policy.py | → | infrastructure/auth/erp_rbac_policy.py | NEW — ERP module permission matrix (imports from domain/enums.py)
 
 
 ### 2.6 — Infrastructure: NLP Services
@@ -500,9 +500,145 @@ File Storage | Local only | Local + MinIO | Keep MinIO — production-ready
 6. **Celery workers** handle async ingestion — not in spec but in code
 7. **vLLM** is a fallback to OpenAI — both clients exist
 8. **MinIO** is production file storage — local is dev only
+9. **Domain enums** (`UserRole`, `QueryIntent`, `ChunkStrategy`, `ErpModule`) are canonical in `src/domain/enums.py` — never hard-code role strings anywhere else (see Section 8)
 ---
 
 ---
+
+## 8. Domain Conventions — Canonical Enums & Permission Matrix
+
+These are the **authoritative definitions** for all role, intent, and chunking constants
+used across the codebase. Any file that references these values MUST import from
+`src/domain/enums.py`. Hard-coded strings are forbidden.
+
+**Canonical file:** `src/domain/enums.py`
+
+---
+
+### 8.1 — UserRole
+
+The nine ERP personas that can hold a JWT. Replace the old placeholder roles
+(ADMIN / MANAGER / ANALYST / VIEWER) everywhere.
+
+| Constant | Value | Description |
+|---|---|---|
+| `UserRole.SUPER_ADMIN` | `"SUPER_ADMIN"` | Full system access — all modules, all operations |
+| `UserRole.PRODUCT_MANAGER` | `"PRODUCT_MANAGER"` | Inventory, procurement, CRM — SQL + RAG |
+| `UserRole.INVENTORY_MANAGER` | `"INVENTORY_MANAGER"` | Inventory and warehouse — SQL + RAG |
+| `UserRole.FINANCE_MANAGER` | `"FINANCE_MANAGER"` | Finance and reporting — SQL + RAG |
+| `UserRole.WAREHOUSE_OPERATOR` | `"WAREHOUSE_OPERATOR"` | Warehouse operations — SQL + RAG; inventory RAG only |
+| `UserRole.PROCUREMENT_MANAGER` | `"PROCUREMENT_MANAGER"` | Procurement and inventory — SQL + RAG; finance RAG only |
+| `UserRole.CRM_AGENT` | `"CRM_AGENT"` | CRM module — SQL + RAG; reporting RAG only |
+| `UserRole.LOGISTICS_AGENT` | `"LOGISTICS_AGENT"` | Logistics and warehouse — SQL + RAG; reporting RAG only |
+| `UserRole.REPORTING_ANALYST` | `"REPORTING_ANALYST"` | **RAG only across all modules — zero SQL access** |
+
+**Admin route guard:** Only `UserRole.SUPER_ADMIN` may access `/admin/*` paths.
+All other roles receive 403.
+
+---
+
+### 8.2 — QueryIntent
+
+Output of the query classifier (`src/infrastructure/nlp/query_classifier.py`).
+Determines which pipeline branch handles the request.
+
+| Constant | Value | Handler |
+|---|---|---|
+| `QueryIntent.RAG` | `"RAG"` | Vector search → context builder → LLM |
+| `QueryIntent.SQL` | `"SQL"` | 3-stage SQL pipeline (generator → validator → executor) |
+| `QueryIntent.HYBRID` | `"HYBRID"` | RAG + SQL in parallel, merged answer |
+| `QueryIntent.BLOCKED` | `"BLOCKED"` | Request rejected — harmful or out-of-scope |
+
+Target classifier accuracy: **≥ 92%** (Sprint 9 gate).
+
+---
+
+### 8.3 — ChunkStrategy
+
+Strategy selected by `chunker_factory.py` based on document type.
+Maps document MIME type / metadata tag → concrete chunker class.
+
+| Constant | Value | Chunker file | Document type |
+|---|---|---|---|
+| `ChunkStrategy.RECURSIVE` | `"RECURSIVE"` | `base_chunker.py` | Generic / fallback |
+| `ChunkStrategy.SENTENCE` | `"SENTENCE"` | `base_chunker.py` | Narrative prose |
+| `ChunkStrategy.TOKEN` | `"TOKEN"` | `base_chunker.py` | Dense technical text |
+| `ChunkStrategy.BPMN` | `"BPMN"` | `bpmn_chunker.py` | BPMN process diagrams / XML |
+| `ChunkStrategy.TAX` | `"TAX"` | `tax_circular_chunker.py` | Algerian tax circulars (DGI) |
+| `ChunkStrategy.SOP` | `"SOP"` | `sop_chunker.py` | Standard Operating Procedures |
+
+---
+
+### 8.4 — ErpModule
+
+ERP business domains. Used as keys in `MODULE_ACCESS_MATRIX` and as the
+`module` label for RBAC violation Prometheus metrics.
+
+| Constant | Value | Typical SQL tables |
+|---|---|---|
+| `ErpModule.INVENTORY` | `"inventory"` | `inventory`, `products`, `returns` |
+| `ErpModule.FINANCE` | `"finance"` | `invoices`, `accounts_receivable`, `vat_transactions`, `budget_actuals`, `payroll` |
+| `ErpModule.WAREHOUSE` | `"warehouse"` | `shipments` |
+| `ErpModule.PROCUREMENT` | `"procurement"` | `purchase_orders`, `suppliers`, `contracts` |
+| `ErpModule.CRM` | `"crm"` | `customers` |
+| `ErpModule.LOGISTICS` | `"logistics"` | `shipments` |
+| `ErpModule.REPORTING` | `"reporting"` | `budget_actuals` (read via finance) |
+| `ErpModule.ADMIN` | `"admin"` | `employees`, `users` |
+
+---
+
+### 8.5 — MODULE_ACCESS_MATRIX
+
+Defined in `src/infrastructure/auth/erp_rbac_policy.py`, imported from `src/domain/enums.py`.
+`ModulePermission(can_sql, can_rag)` — both booleans.
+
+| Role | Module | can_sql | can_rag |
+|---|---|---|---|
+| SUPER_ADMIN | ALL | ✓ | ✓ |
+| PRODUCT_MANAGER | INVENTORY | ✓ | ✓ |
+| PRODUCT_MANAGER | PROCUREMENT | ✓ | ✓ |
+| PRODUCT_MANAGER | CRM | ✓ | ✓ |
+| PRODUCT_MANAGER | REPORTING | ✗ | ✓ |
+| INVENTORY_MANAGER | INVENTORY | ✓ | ✓ |
+| INVENTORY_MANAGER | WAREHOUSE | ✓ | ✓ |
+| INVENTORY_MANAGER | REPORTING | ✗ | ✓ |
+| FINANCE_MANAGER | FINANCE | ✓ | ✓ |
+| FINANCE_MANAGER | REPORTING | ✓ | ✓ |
+| WAREHOUSE_OPERATOR | WAREHOUSE | ✓ | ✓ |
+| WAREHOUSE_OPERATOR | INVENTORY | ✗ | ✓ |
+| PROCUREMENT_MANAGER | PROCUREMENT | ✓ | ✓ |
+| PROCUREMENT_MANAGER | INVENTORY | ✓ | ✓ |
+| PROCUREMENT_MANAGER | FINANCE | ✗ | ✓ |
+| PROCUREMENT_MANAGER | REPORTING | ✗ | ✓ |
+| CRM_AGENT | CRM | ✓ | ✓ |
+| CRM_AGENT | REPORTING | ✗ | ✓ |
+| LOGISTICS_AGENT | LOGISTICS | ✓ | ✓ |
+| LOGISTICS_AGENT | WAREHOUSE | ✓ | ✓ |
+| LOGISTICS_AGENT | REPORTING | ✗ | ✓ |
+| REPORTING_ANALYST | ALL | ✗ | ✓ |
+
+**Rules enforced in `erp_rbac_policy.py`:**
+- `get_allowed_modules(role)` → `dict[ErpModule, ModulePermission]` (absent key = no access)
+- `is_table_allowed(role, table_name)` → `bool` (resolves table → module, checks `can_sql`)
+- `is_collection_allowed(role, collection_name)` → `bool` (resolves collection → module, checks `can_rag`)
+- REPORTING_ANALYST: `is_table_allowed(...)` always returns `False`
+- SUPER_ADMIN: all functions always return `True`
+
+---
+
+### 8.6 — Old Role Migration
+
+| Old placeholder | New canonical role |
+|---|---|
+| `"ADMIN"` | `UserRole.SUPER_ADMIN` |
+| `"MANAGER"` | `UserRole.PRODUCT_MANAGER` |
+| `"ANALYST"` | `UserRole.REPORTING_ANALYST` |
+| `"VIEWER"` | `UserRole.REPORTING_ANALYST` |
+
+Old strings must be purged from all code, tests, and JWT fixtures.
+
+---
+
 # DOCUMENT 2: Sprint Plan & Git Strategy
 ---
 
