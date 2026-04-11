@@ -47,7 +47,7 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "phone_dz",
-        re.compile(r"(?:\+213|0)[5-7]\d{8}"),
+        re.compile(r"(?<!\d)(?:\+213|0)[5-7]\d{8}(?!\d)"),
     ),
     (
         "nid_dz",
