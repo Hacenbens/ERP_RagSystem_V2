@@ -1,0 +1,182 @@
+[
+  {
+    "id": 1,
+    "description": "single email — billing address in ERP",
+    "text": "Send the invoice summary to ahmed.benali@ferza-corp.dz as PDF",
+    "expected": {"email": 1, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 2,
+    "description": "single email — CRM customer lookup",
+    "text": "Look up CRM record for sara.hamidi@entreprise.com and pull last order",
+    "expected": {"email": 1, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 3,
+    "description": "single email — subdomain format",
+    "text": "Billing contact is nadia.bensaid@accounts.supply-dz.com, invoice pending",
+    "expected": {"email": 1, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 4,
+    "description": "single email — internal HR domain",
+    "text": "Approve leave request submitted by karim.ait@rh.erp-internal.dz",
+    "expected": {"email": 1, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 5,
+    "description": "single phone — local 06 prefix",
+    "text": "Delivery driver contact number is 0661234567 for shipment SHP-9912",
+    "expected": {"email": 0, "phone_dz": 1, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 6,
+    "description": "single phone — local 05 prefix",
+    "text": "Call supplier rep at 0551234567 to confirm purchase order delivery date",
+    "expected": {"email": 0, "phone_dz": 1, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 7,
+    "description": "single phone — local 07 prefix",
+    "text": "Warehouse operator reachable on 0771234567 during shift hours",
+    "expected": {"email": 0, "phone_dz": 1, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 8,
+    "description": "single phone — international +213 prefix",
+    "text": "Logistics agent international contact: +213661234567 for cross-border shipment",
+    "expected": {"email": 0, "phone_dz": 1, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 9,
+    "description": "single NID — HR employee file",
+    "text": "Employee file reference NID 199001011234567890 for leave balance update",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 1, "tax_id_dz": 0}
+  },
+  {
+    "id": 10,
+    "description": "single NID — payroll processing",
+    "text": "Process payroll for employee NID 198504152345678901 — net 85000 DZD",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 1, "tax_id_dz": 0}
+  },
+  {
+    "id": 11,
+    "description": "single tax ID — supplier NIF",
+    "text": "Supplier NIF 123456789012345 is registered for VAT in zone Alger",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 1}
+  },
+  {
+    "id": 12,
+    "description": "single tax ID — finance reconciliation",
+    "text": "VAT return for NIF 098765432109876 covering Q3 fiscal period",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 1}
+  },
+  {
+    "id": 13,
+    "description": "email + phone — CRM contact card",
+    "text": "Update CRM contact: email farid.zerrouki@client-abc.dz, mobile 0661234567",
+    "expected": {"email": 1, "phone_dz": 1, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 14,
+    "description": "email + NID — HR onboarding",
+    "text": "New hire: yacine.boukhalfa@logistics.dz, NID 200204031234567890 starts Monday",
+    "expected": {"email": 1, "phone_dz": 0, "nid_dz": 1, "tax_id_dz": 0}
+  },
+  {
+    "id": 15,
+    "description": "phone + tax ID — procurement supplier",
+    "text": "Supplier hotline 0561234567, NIF 112233445566778 for purchase order approval",
+    "expected": {"email": 0, "phone_dz": 1, "nid_dz": 0, "tax_id_dz": 1}
+  },
+  {
+    "id": 16,
+    "description": "NID + tax ID — compliance check",
+    "text": "Cross-reference employee NID 199706282345678901 with NIF 987654321098765 in tax records",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 1, "tax_id_dz": 1}
+  },
+  {
+    "id": 17,
+    "description": "all four PII types — full employee-supplier record",
+    "text": "Employee ali.kader@erp-admin.dz, NID 197801155678901234, NIF 123456789012345, phone 0661234567",
+    "expected": {"email": 1, "phone_dz": 1, "nid_dz": 1, "tax_id_dz": 1}
+  },
+  {
+    "id": 18,
+    "description": "multiple emails — CC list",
+    "text": "CC admin@erp.dz and hr.director@company-dz.com on this approval workflow",
+    "expected": {"email": 2, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 19,
+    "description": "multiple phones — fallback contact list",
+    "text": "Try primary 0551234567 or secondary +213771234567 if no answer",
+    "expected": {"email": 0, "phone_dz": 2, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 20,
+    "description": "multiple NIDs — compliance batch",
+    "text": "Flag NIDs 199001011234567890 and 198504152345678901 for audit review",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 2, "tax_id_dz": 0}
+  },
+  {
+    "id": 21,
+    "description": "multiple tax IDs — multi-supplier reconciliation",
+    "text": "Compare NIF 123456789012345 and NIF 987654321098765 VAT submissions",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 2}
+  },
+  {
+    "id": 22,
+    "description": "no PII — inventory query",
+    "text": "Show current stock levels for product SKU-7734 in warehouse Blida",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 23,
+    "description": "no PII — finance aggregation",
+    "text": "What is total revenue for Q3 2024 broken down by product category?",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 24,
+    "description": "no PII — procurement summary",
+    "text": "List all pending purchase orders with value above 50000 DZD this month",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 25,
+    "description": "no PII — logistics status",
+    "text": "Track shipment SHP-0042 current location and estimated delivery date",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 26,
+    "description": "no PII — HR aggregation",
+    "text": "How many employees are on approved leave in Oran region this week?",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 27,
+    "description": "edge: phone with spaces — must NOT match (pattern requires contiguous digits)",
+    "text": "Reach warehouse team at 05 51 23 45 67 between 8am and 4pm",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 28,
+    "description": "edge: 14-digit number — must NOT match tax_id (too short)",
+    "text": "Invoice reference 12345678901234 issued in April, not a NIF",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 29,
+    "description": "edge: 19-digit number — must NOT match NID (too long)",
+    "text": "Transaction batch ID 1234567890123456789 processed successfully",
+    "expected": {"email": 0, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 0}
+  },
+  {
+    "id": 30,
+    "description": "edge: email + 15-digit standalone — both must be detected",
+    "text": "Submit VAT report for tax@finance-admin.dz, client NIF 000011112222333",
+    "expected": {"email": 1, "phone_dz": 0, "nid_dz": 0, "tax_id_dz": 1}
+  }
+]
