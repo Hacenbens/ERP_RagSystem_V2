@@ -9,6 +9,8 @@ Provides a fully wired FastAPI TestClient with:
 """
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
@@ -81,7 +83,7 @@ def app(jwt_handler):
 
 
 @pytest.fixture()
-def client(app) -> TestClient:
+def client(app) -> Generator[TestClient, None, None]:
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
 

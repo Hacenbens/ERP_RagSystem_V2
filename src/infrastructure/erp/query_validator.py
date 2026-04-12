@@ -105,9 +105,9 @@ class QueryValidator:
 
         # --- Rule 2: No forbidden write/DDL statements ------------------------
         for pattern in _FORBIDDEN_STATEMENTS:
-            if re.search(pattern, raw_sql, re.IGNORECASE):
-                keyword = re.search(pattern, raw_sql, re.IGNORECASE).group()
-                errors.append(f"Forbidden SQL keyword: {keyword.upper()}")
+            m = re.search(pattern, raw_sql, re.IGNORECASE)
+            if m:
+                errors.append(f"Forbidden SQL keyword: {m.group().upper()}")
 
         # --- Rule 3: No injection patterns ------------------------------------
         for pattern in _INJECTION_PATTERNS:
