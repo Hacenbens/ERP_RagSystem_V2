@@ -8,6 +8,42 @@ Each sprint gets one entry. Entries are added by the Committer agent at sprint c
 
 ---
 
+## [sprint-5-done] — 2026-04-12
+
+### Added
+- feat(middleware): `src/infrastructure/auth/erp_rbac_policy.py` — `MODULE_ACCESS_MATRIX` (9 roles × 8 ERP modules); `get_allowed_modules`, `is_table_allowed`, `is_collection_allowed` policy functions; SQL table→module and RAG collection→module maps
+- feat(middleware): `src/domain/user_role.py`, `erp_module.py`, `query_intent.py`, `chunk_strategy.py` — canonical enum layer as single source of truth for all domain constants
+- feat(middleware): `AuthMiddleware` + `PIIMaskingMiddleware` — `MIDDLEWARE_VIOLATIONS` counter wired; `auth` label on every 401, `pii` label once per request with ≥1 PII hit
+- feat(middleware): `RBACMiddleware` — full module guard upgraded; `REPORTING_ANALYST` denied all SQL; `erp_module` / `erp_table` guards via policy functions; `rbac_module` violation label
+- fix(middleware): `PIIMaskingMiddleware` — Algerian NID (18-digit) and tax ID (15-digit) patterns added; digit lookarounds prevent false positives inside NID sequences
+- fix(middleware): `RateLimitMiddleware` — `_user_counter` / `_ip_counter` moved from module-level globals to per-instance attributes; optional counter injection kwargs added to eliminate cross-test IP bucket pollution
+- docs(observability): `prometheus_metrics.py` — `MIDDLEWARE_VIOLATIONS` help text now enumerates all 5 label values: `auth | rate_limit_user | rate_limit_ip | rbac_module | pii`
+- docs(architecture): `ARCHITECTURE.md` — 5-layer middleware stack diagram with per-layer responsibilities; full `MODULE_ACCESS_MATRIX` table (role × module × SQL+RAG/RAG/—); SQL table→module map; RAG collection→module map; `ModuleAccessGuard` embedded-class note; Prometheus metrics reference
+
+### Tested
+- test(middleware): `src/tests/integration/test_rate_limit.py` — per-user 60 req/min and per-IP 200 req/min throttle; burst handling; `Retry-After` header; `rate_limit_user` / `rate_limit_ip` violation counters
+- test(middleware): `src/tests/integration/test_module_guard.py` — SQL table filtering per ERP module verified across all 9 roles
+- test(middleware): `src/tests/unit/test_pii_masking.py` — 30-query fixture with ground-truth labels; ≥98% recall gate on email, phone_dz, NID, tax_id
+- test(middleware): `src/tests/performance/test_middleware_latency.py` — full 5-layer stack overhead < 20ms p99 confirmed
+- test(middleware): `src/tests/integration/test_middleware_violations.py` — 24 tests; all 5 `MIDDLEWARE_VIOLATIONS` label values observable in Prometheus REGISTRY; before/after delta isolation
+- test(middleware): `src/tests/integration/test_middleware_order.py` — 19 tests; Auth 401 and RBAC 403 provably never reach SQL pipeline; `SQL_STAGE1_LATENCY` / `SQL_STAGE3_ROWS` stay flat on blocked requests; Auth confirmed outermost
+
+### Fixed
+- fix(middleware): cross-test IP counter pollution in `RateLimitMiddleware` — per-instance counters with injection API; all rate-limit and unit test suites adapted
+
+### Definition of Done — Sprint 5 ✓
+- Rate limiting 60 req/min / user, 200 req/min / IP — integration test green
+- `REPORTING_ANALYST` SQL path returns 403 — module guard test green
+- PII masking ≥98% recall on 30-query DZ fixture — unit test green
+- Full 5-layer stack < 20ms p99 — performance test green
+- `auth_failure_rate`, `rbac_violation_rate`, `pii_detection_rate`, `middleware_violations` visible in Prometheus
+- Auth/RBAC short-circuit proven — `test_middleware_order.py` green
+- `ARCHITECTURE.md` documents stack, RBAC matrix, ModuleAccessGuard note
+- 626 tests total, 0 failures
+- PR #1 open against `develop` — merge pending CI pipeline definition
+
+---
+
 ## [sprint-4-done] — 2026-04-09
 
 ### Added
