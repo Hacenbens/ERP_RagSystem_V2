@@ -23,7 +23,7 @@ from src.infrastructure.auth.jwt_handler import (
     TokenExpiredError,
     TokenInvalidError,
 )
-from src.observability.prometheus_metrics import AUTH_FAILURE_RATE
+from src.observability.prometheus_metrics import AUTH_FAILURE_RATE, MIDDLEWARE_VIOLATIONS
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +41,7 @@ _PUBLIC_PATHS: frozenset[str] = frozenset({
 
 def _401(reason: str, detail: str) -> JSONResponse:
     AUTH_FAILURE_RATE.labels(reason=reason).inc()
+    MIDDLEWARE_VIOLATIONS.labels(middleware="auth").inc()
     return JSONResponse(
         status_code=401,
         content={"detail": detail},
