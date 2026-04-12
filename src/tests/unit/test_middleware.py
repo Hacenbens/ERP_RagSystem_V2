@@ -278,8 +278,8 @@ class TestRateLimitMiddleware:
         """Exceeding the per-user limit increments MIDDLEWARE_VIOLATIONS."""
         from src.middleware.RateLimitMiddleware import (
             RateLimitMiddleware,
+            _WindowCounter,
             _USER_LIMIT_PER_MIN,
-            _user_counter,
         )
         from prometheus_client import REGISTRY
 
@@ -291,16 +291,17 @@ class TestRateLimitMiddleware:
                         return s.value
             return 0.0
 
-        # Force the counter above the limit
+        # Create an isolated counter, pre-flood it, then inject it into the app.
         test_user = f"flood-user-{time.monotonic()}"
+        uc = _WindowCounter()
         for _ in range(_USER_LIMIT_PER_MIN + 2):
-            _user_counter.increment(test_user)
+            uc.increment(test_user)
 
         before = _count()
         # One more hit triggers the violation log path
         from fastapi import FastAPI
         app2 = FastAPI()
-        app2.add_middleware(RateLimitMiddleware)
+        app2.add_middleware(RateLimitMiddleware, user_counter=uc)
 
         @app2.get("/health")
         async def h(request: Request):
