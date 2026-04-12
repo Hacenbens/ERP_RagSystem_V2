@@ -8,10 +8,9 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 
-from src.infrastructure.auth.jwt_handler import JWTHandler, TokenClaims
+from src.infrastructure.auth.jwt_handler import JWTHandler
 from src.infrastructure.auth.user_repository import (
     InMemoryUserRepository,
-    InvalidCredentialsError,
     UserRecord,
 )
 

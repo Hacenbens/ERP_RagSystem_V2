@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
-from src.infrastructure.erp.query_executor import ExecutionResult, QueryExecutor, TenantFilterMissingError
+from src.infrastructure.erp.query_executor import QueryExecutor, TenantFilterMissingError
 from src.infrastructure.erp.query_generator import QueryGenerator
 from src.infrastructure.erp.query_log_repository import InMemoryQueryLogRepository
 from src.infrastructure.erp.query_validator import QueryValidator

@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
 
 from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS, SQL_STAGE2_ERRORS
 from src.observability.structured_logger import get_logger

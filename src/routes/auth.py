@@ -154,7 +154,7 @@ async def reset_password(
             reset_token=body.reset_token,
             new_password=body.new_password,
         )
-    except UserNotFoundError as exc:
+    except UserNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token.",

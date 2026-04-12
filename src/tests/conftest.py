@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from starlette.testclient import TestClient
 
 from src.infrastructure.auth.jwt_handler import JWTHandler
