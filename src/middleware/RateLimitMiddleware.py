@@ -48,16 +48,27 @@ class _WindowCounter:
         return len(self._counts[key])
 
 
-_user_counter = _WindowCounter()
-_ip_counter = _WindowCounter()
-
-
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Throttle requests by user_id and client IP.
 
     Returns 429 with a Retry-After header when a limit is exceeded.
     User limit is checked first; IP limit second.
+
+    Counters are instance-level so each app instance (and each test fixture)
+    starts with a clean slate — no cross-test pollution from shared module globals.
     """
+
+    def __init__(  # noqa: ANN001
+        self,
+        app,
+        *,
+        user_counter: _WindowCounter | None = None,
+        ip_counter: _WindowCounter | None = None,
+    ) -> None:
+        super().__init__(app)
+        # Allow injection for testing; production always gets fresh counters.
+        self._user_counter = user_counter if user_counter is not None else _WindowCounter()
+        self._ip_counter = ip_counter if ip_counter is not None else _WindowCounter()
 
     async def dispatch(
         self,
@@ -73,7 +84,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             or (request.client.host if request.client else "unknown")
         )
 
-        user_count = _user_counter.increment(user_id)
+        user_count = self._user_counter.increment(user_id)
         if user_count > _USER_LIMIT_PER_MIN:
             MIDDLEWARE_VIOLATIONS.labels(middleware="rate_limit_user").inc()
             logger.warning(
@@ -88,7 +99,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": str(_WINDOW_SECONDS)},
             )
 
-        ip_count = _ip_counter.increment(client_ip)
+        ip_count = self._ip_counter.increment(client_ip)
         if ip_count > _IP_LIMIT_PER_MIN:
             MIDDLEWARE_VIOLATIONS.labels(middleware="rate_limit_ip").inc()
             logger.warning(
