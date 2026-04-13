@@ -122,6 +122,10 @@ jobs:
 
       - name: Run performance tests
         run: |
+          if [ -z "$(find src/tests/performance -name 'test_*.py' 2>/dev/null)" ]; then
+            echo "::notice::No performance tests found — skipping"
+            exit 0
+          fi
           pytest src/tests/performance/ -v --tb=short
 
   # ── 5. SQL benchmark gate ────────────────────────────────────────────────────
