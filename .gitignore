@@ -37,3 +37,4 @@ Thumbs.db
 
 # Docker volumes (never commit data)
 docker/volumes/
+PRESENTATION.md
