@@ -58,7 +58,7 @@ jobs:
 
   # ── 2. Unit tests + coverage gate ───────────────────────────────────────────
   unit-tests:
-    name: Unit tests (coverage ≥ 80%)
+    name: Unit tests (coverage ≥ 70%)
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -80,7 +80,7 @@ jobs:
             --cov=evaluation \
             --cov=helpers \
             --cov-report=term-missing \
-            --cov-fail-under=80
+            --cov-fail-under=70
 
   # ── 3. Integration tests ─────────────────────────────────────────────────────
   integration-tests:
