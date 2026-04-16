@@ -158,7 +158,17 @@ class TestAuthMiddleware:
     @pytest.fixture()
     def client(self):
         from src.middleware.AuthMiddleware import AuthMiddleware
-        return TestClient(_make_app(AuthMiddleware), raise_server_exceptions=False)
+        from src.infrastructure.di.container import DIContainer
+        from src.tests.fixtures.jwt_fixtures import make_jwt_handler
+
+        self._jwt_handler = make_jwt_handler()
+        app = _make_app(AuthMiddleware)
+        container = DIContainer()
+        container.register("jwt_handler", self._jwt_handler)
+        container.register("user_repository", object())
+        container.register("auth_use_case", object())
+        app.state.container = container
+        return TestClient(app, raise_server_exceptions=False)
 
     def test_auth_middleware_public_path_requires_no_token(self, client):
         r = client.get("/health")
@@ -174,7 +184,9 @@ class TestAuthMiddleware:
         assert "detail" in body
 
     def test_auth_middleware_bearer_token_passes_through(self, client):
-        r = client.get("/admin/jobs", headers={"Authorization": "Bearer stub-token"})
+        from src.tests.fixtures.jwt_fixtures import make_valid_token
+        token = make_valid_token(self._jwt_handler, role="ADMIN")
+        r = client.get("/admin/jobs", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
 
     def test_auth_middleware_malformed_header_returns_401(self, client):
@@ -201,11 +213,25 @@ class TestAuthMiddleware:
         after = _count()
         assert after - before == pytest.approx(1.0)
 
-    def test_auth_middleware_sets_stub_state_on_valid_token(self, client):
+    def test_auth_middleware_sets_real_claims_on_valid_token(self, client):
         from fastapi import FastAPI
         from src.middleware.AuthMiddleware import AuthMiddleware
+        from src.tests.fixtures.jwt_fixtures import make_jwt_handler, make_valid_token
+
+        handler = make_jwt_handler()
+        token = make_valid_token(handler, user_id="real-user", role="MANAGER", tenant_id="ferza")
 
         app = FastAPI()
+        app.state.container = None  # AuthMiddleware will build its own handler
+
+        # Wire handler into a mock container so middleware can resolve it
+        from src.infrastructure.di.container import DIContainer
+        container = DIContainer()
+        container.register("jwt_handler", handler)
+        container.register("user_repository", object())
+        container.register("auth_use_case", object())
+        app.state.container = container
+
         app.add_middleware(AuthMiddleware)
 
         @app.get("/whoami")
@@ -213,14 +239,16 @@ class TestAuthMiddleware:
             return {
                 "user_id": getattr(request.state, "user_id", None),
                 "role": getattr(request.state, "role", None),
+                "tenant_id": getattr(request.state, "tenant_id", None),
             }
 
         c = TestClient(app, raise_server_exceptions=True)
-        r = c.get("/whoami", headers={"Authorization": "Bearer stub"})
+        r = c.get("/whoami", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
         body = r.json()
-        assert body["user_id"] == "stub-user"
-        assert body["role"] == "ADMIN"
+        assert body["user_id"] == "real-user"
+        assert body["role"] == "MANAGER"
+        assert body["tenant_id"] == "ferza"
 
 
 # ===========================================================================
@@ -250,8 +278,8 @@ class TestRateLimitMiddleware:
         """Exceeding the per-user limit increments MIDDLEWARE_VIOLATIONS."""
         from src.middleware.RateLimitMiddleware import (
             RateLimitMiddleware,
+            _WindowCounter,
             _USER_LIMIT_PER_MIN,
-            _user_counter,
         )
         from prometheus_client import REGISTRY
 
@@ -263,16 +291,17 @@ class TestRateLimitMiddleware:
                         return s.value
             return 0.0
 
-        # Force the counter above the limit
+        # Create an isolated counter, pre-flood it, then inject it into the app.
         test_user = f"flood-user-{time.monotonic()}"
+        uc = _WindowCounter()
         for _ in range(_USER_LIMIT_PER_MIN + 2):
-            _user_counter.increment(test_user)
+            uc.increment(test_user)
 
         before = _count()
         # One more hit triggers the violation log path
         from fastapi import FastAPI
         app2 = FastAPI()
-        app2.add_middleware(RateLimitMiddleware)
+        app2.add_middleware(RateLimitMiddleware, user_counter=uc)
 
         @app2.get("/health")
         async def h(request: Request):
@@ -304,16 +333,26 @@ class TestRBACMiddleware:
     def client_with_admin_role(self):
         from src.middleware.AuthMiddleware import AuthMiddleware
         from src.middleware.RBACMiddleware import RBACMiddleware
-        # Correct order: Auth (outer) sets request.state.role before RBAC reads it
-        return TestClient(
-            _make_app(AuthMiddleware, RBACMiddleware),
-            raise_server_exceptions=False,
-        )
+        from src.infrastructure.di.container import DIContainer
+        from src.tests.fixtures.jwt_fixtures import make_jwt_handler
+
+        self._jwt_handler = make_jwt_handler()
+        app = _make_app(AuthMiddleware, RBACMiddleware)
+
+        container = DIContainer()
+        container.register("jwt_handler", self._jwt_handler)
+        container.register("user_repository", object())
+        container.register("auth_use_case", object())
+        app.state.container = container
+
+        return TestClient(app, raise_server_exceptions=False)
 
     def test_rbac_admin_role_accesses_admin_route(self, client_with_admin_role):
-        """Stub AuthMiddleware sets role=ADMIN — should pass."""
+        """Real RS256 token with role=SUPER_ADMIN should pass admin route."""
+        from src.tests.fixtures.jwt_fixtures import make_valid_token
+        token = make_valid_token(self._jwt_handler, role="SUPER_ADMIN")
         r = client_with_admin_role.get(
-            "/admin/jobs", headers={"Authorization": "Bearer stub"}
+            "/admin/jobs", headers={"Authorization": f"Bearer {token}"}
         )
         assert r.status_code == 200
 

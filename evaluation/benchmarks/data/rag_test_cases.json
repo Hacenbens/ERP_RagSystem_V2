@@ -1,0 +1,92 @@
+[
+  {
+    "id": "rag_001",
+    "query": "What is the procedure for approving a purchase order in ERP?",
+    "expected_chunk_ids": ["chunk_po_approval_001", "chunk_po_approval_002"],
+    "description": "Purchase order approval SOP retrieval"
+  },
+  {
+    "id": "rag_002",
+    "query": "How is VAT calculated on domestic sales transactions in Algeria?",
+    "expected_chunk_ids": ["chunk_vat_dz_001", "chunk_vat_dz_002"],
+    "description": "Algerian VAT tax circular retrieval"
+  },
+  {
+    "id": "rag_003",
+    "query": "What are the steps for onboarding a new supplier?",
+    "expected_chunk_ids": ["chunk_supplier_onboard_001", "chunk_supplier_onboard_002"],
+    "description": "Supplier onboarding SOP"
+  },
+  {
+    "id": "rag_004",
+    "query": "Explain the inventory reorder process and when it triggers",
+    "expected_chunk_ids": ["chunk_inventory_reorder_001", "chunk_inventory_reorder_002"],
+    "description": "Inventory management SOP"
+  },
+  {
+    "id": "rag_005",
+    "query": "What is the process for employee leave approval?",
+    "expected_chunk_ids": ["chunk_hr_leave_001", "chunk_hr_leave_002"],
+    "description": "HR leave management SOP"
+  },
+  {
+    "id": "rag_006",
+    "query": "Describe the quality control inspection checklist for production",
+    "expected_chunk_ids": ["chunk_qc_inspection_001", "chunk_qc_inspection_002"],
+    "description": "Production QC process document"
+  },
+  {
+    "id": "rag_007",
+    "query": "How are accounts receivable reconciled at month end?",
+    "expected_chunk_ids": ["chunk_ar_reconcile_001", "chunk_ar_reconcile_002"],
+    "description": "Accounting month-end close SOP"
+  },
+  {
+    "id": "rag_008",
+    "query": "What are the RBAC roles and their permissions in the ERP system?",
+    "expected_chunk_ids": ["chunk_rbac_policy_001", "chunk_rbac_policy_002"],
+    "description": "RBAC policy document retrieval"
+  },
+  {
+    "id": "rag_009",
+    "query": "How is payroll processed and validated before payment?",
+    "expected_chunk_ids": ["chunk_payroll_process_001", "chunk_payroll_process_002"],
+    "description": "Payroll processing SOP"
+  },
+  {
+    "id": "rag_010",
+    "query": "What is the document flow for a customer sales order from creation to delivery?",
+    "expected_chunk_ids": ["chunk_so_flow_001", "chunk_so_flow_002", "chunk_so_flow_003"],
+    "description": "Sales order BPMN process"
+  },
+  {
+    "id": "rag_011",
+    "query": "What fixed asset categories are recognized and how are they depreciated?",
+    "expected_chunk_ids": ["chunk_asset_depreciation_001", "chunk_asset_depreciation_002"],
+    "description": "Fixed asset accounting policy"
+  },
+  {
+    "id": "rag_012",
+    "query": "How are logistics shipments tracked and escalated when delayed?",
+    "expected_chunk_ids": ["chunk_logistics_track_001", "chunk_logistics_track_002"],
+    "description": "Logistics management SOP"
+  },
+  {
+    "id": "rag_013",
+    "query": "What is the approval matrix for budget expenditure?",
+    "expected_chunk_ids": ["chunk_budget_approval_001", "chunk_budget_approval_002"],
+    "description": "Budget approval policy document"
+  },
+  {
+    "id": "rag_014",
+    "query": "Describe the contract lifecycle management process in ERP",
+    "expected_chunk_ids": ["chunk_contract_lifecycle_001", "chunk_contract_lifecycle_002"],
+    "description": "Contract management BPMN"
+  },
+  {
+    "id": "rag_015",
+    "query": "What are the tax obligations for quarterly declarations under Algerian fiscal law?",
+    "expected_chunk_ids": ["chunk_tax_quarterly_001", "chunk_tax_quarterly_002"],
+    "description": "Algerian fiscal tax circular"
+  }
+]

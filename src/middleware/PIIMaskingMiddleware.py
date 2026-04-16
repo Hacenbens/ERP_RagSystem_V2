@@ -31,7 +31,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from src.observability.prometheus_metrics import PII_DETECTION_RATE
+from src.observability.prometheus_metrics import MIDDLEWARE_VIOLATIONS, PII_DETECTION_RATE
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -47,7 +47,7 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "phone_dz",
-        re.compile(r"(?:\+213|0)[5-7]\d{8}"),
+        re.compile(r"(?<!\d)(?:\+213|0)[5-7]\d{8}(?!\d)"),
     ),
     (
         "nid_dz",
@@ -101,6 +101,7 @@ class PIIMaskingMiddleware(BaseHTTPMiddleware):
                     masked_query, counts = _mask_pii(payload["query"])
 
                     if counts:
+                        MIDDLEWARE_VIOLATIONS.labels(middleware="pii").inc()
                         for entity_type, hit_count in counts.items():
                             PII_DETECTION_RATE.labels(entity_type=entity_type).inc(hit_count)
                             logger.info(

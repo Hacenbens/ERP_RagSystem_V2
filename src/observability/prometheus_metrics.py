@@ -72,7 +72,8 @@ PII_DETECTION_RATE = Counter(
 
 MIDDLEWARE_VIOLATIONS = Counter(
     "erp_rag_middleware_violations_total",
-    "Total requests blocked or flagged by each middleware layer",
+    "Total requests blocked or flagged by each middleware layer. "
+    "Label values: auth | rate_limit_user | rate_limit_ip | rbac_module | pii",
     ["middleware"],
 )
 

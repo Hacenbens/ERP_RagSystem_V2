@@ -1,3 +1,4 @@
+
 """
 structured_logger — JSON structured logging with trace_id / user_id propagation.
 
