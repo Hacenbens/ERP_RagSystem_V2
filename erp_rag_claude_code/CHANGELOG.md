@@ -8,6 +8,39 @@ Each sprint gets one entry. Entries are added by the Committer agent at sprint c
 
 ---
 
+## [sprint-5-done] — 2026-04-16
+
+### Added
+- feat(middleware): `src/middleware/RateLimitMiddleware.py` — enforce 429 rate limiting: 60 req/min per user, 200 req/min per IP; per-instance sliding-window counters
+- feat(middleware): `src/infrastructure/erp/erp_rbac_policy.py` — `MODULE_ACCESS_MATRIX` + policy functions; maps ERP modules to allowed roles
+- feat(domain): `src/domain/enums.py` — canonical enum layer: `UserRole`, `QueryIntent`, `ChunkStrategy`, `ErpModule`
+- feat(middleware): `src/middleware/RBACMiddleware.py` — module guard upgrade integrating `MODULE_ACCESS_MATRIX`; role migration to canonical enums
+- feat(observability): `MIDDLEWARE_VIOLATIONS` Prometheus counter wired into `AuthMiddleware`, `RateLimitMiddleware`, `RBACMiddleware`, `PIIMaskingMiddleware`
+
+### Fixed
+- fix(middleware): move `RateLimitMiddleware` counters from module globals to per-instance — prevents counter bleed across test cases
+- fix(middleware): add digit lookarounds to `phone_dz` regex pattern — prevent false positives inside 18-digit NID sequences
+
+### Tested
+- test(middleware): `src/tests/integration/test_rate_limit.py` — per-user throttle (60/min), per-IP throttle (200/min), burst handling; 429 gate verified
+- test(middleware): `src/tests/integration/test_module_guard.py` — SQL table filtering per ERP module; ANALYST blocked from finance_schema (403)
+- test(middleware): `src/tests/unit/test_pii_masking.py` — 30-query fixture; ≥98% recall gate on email, phone (DZ), NID (18-digit), tax ID (15-digit)
+- test(performance): `src/tests/performance/test_middleware_latency.py` — full 5-layer stack overhead < 20ms p99 confirmed
+- test(middleware): `src/tests/integration/test_middleware_violations.py` — `MIDDLEWARE_VIOLATIONS` counter increments verified per middleware
+- test(middleware): `src/tests/integration/test_middleware_order.py` — auth rejection never reaches SQL pipeline; short-circuit ordering verified
+- docs(middleware): `ARCHITECTURE.md` — RBACMiddleware + `erp_rbac_policy.py` decision matrix documented
+
+### Definition of Done — Sprint 5 ✓
+- Rate limiting: 60 req/min per user, 200 req/min per IP — verified by integration test
+- ANALYST role cannot query finance_schema — ModuleGuard returns 403 — verified by test
+- PII masking ≥98% recall on email, DZ phone, NID (18-digit), tax ID (15-digit)
+- Full 5-layer middleware stack adds < 20ms overhead (p99) — verified by performance test
+- `MIDDLEWARE_VIOLATIONS` counter visible in Prometheus for all 4 middleware layers
+- 626 tests total — all green
+- Sprint tag `sprint-5-done` pushed, CHANGELOG updated
+
+---
+
 ## [sprint-4-done] — 2026-04-09
 
 ### Added
