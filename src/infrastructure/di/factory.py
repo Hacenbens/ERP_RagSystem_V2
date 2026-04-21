@@ -93,15 +93,29 @@ def build_worker_container() -> DIContainer:
         dead_letter_repo = InMemoryDeadLetterRepository()
         idempotency_store = InMemoryIdempotencyStore()
 
-    # Chunker is a stub until Sprint 6 Task 3 wires ChunkerFactory
-    def _stub_chunker(asset_id: str, tenant_id: str, chunk_strategy: str) -> int:
-        raise NotImplementedError(
-            "ChunkerFactory not yet wired — implement in Sprint 6 Task 3."
-        )
+    from src.domain.chunk_strategy import ChunkStrategy
+    from src.infrastructure.workers.chunkers.chunker_factory import ChunkerFactory
+
+    _chunker_factory = ChunkerFactory()
+
+    def _chunker(asset_id: str, tenant_id: str, chunk_strategy: str) -> int:
+        """Resolve strategy → chunker → chunk text stub.
+
+        Full content-fetch from MinIO/MongoDB is wired in Sprint 7.
+        For now the factory validates the strategy and returns a
+        deterministic chunk count so the task pipeline is testable.
+        """
+        strategy = ChunkStrategy(chunk_strategy)
+        chunker = _chunker_factory.get_chunker(strategy)
+        # Content fetch stub — returns a minimal placeholder text so the
+        # chunker can exercise its logic without a real document store.
+        placeholder = f"asset:{asset_id} tenant:{tenant_id} strategy:{chunk_strategy}"
+        chunks = chunker.chunk(placeholder)
+        return max(len(chunks), 1)
 
     ingest_use_case = IngestAssetUseCase(
         idempotency_store=idempotency_store,
-        chunker=_stub_chunker,
+        chunker=_chunker,
     )
 
     container.register("dead_letter_repository", dead_letter_repo)
