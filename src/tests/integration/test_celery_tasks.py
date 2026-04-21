@@ -29,8 +29,8 @@ from src.infrastructure.workers.dead_letter_repository import InMemoryDeadLetter
 from src.infrastructure.workers.idempotency_store import InMemoryIdempotencyStore
 from src.observability.prometheus_metrics import WORKER_TASKS_DISPATCHED, WORKER_TASKS_FAILED
 from src.use_cases.tasks.ingest_asset_use_case import IngestAssetUseCase
-from src.workers.celery_app import celery_app
-from src.workers.tasks.ingest_task import (
+from src.infrastructure.workers.celery_app import celery_app
+from src.infrastructure.workers.tasks.ingest_task import (
     BASE_RETRY_DELAY_SECONDS,
     MAX_RETRIES,
     MAX_RETRY_DELAY_SECONDS,
@@ -101,32 +101,32 @@ def celery_eager_mode():
 class TestIngestAssetHappyPath:
     def test_successful_ingest_returns_success_status(self):
         container = _build_test_container(chunker=lambda a, t, s: 7)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["status"] == "success"
 
     def test_successful_ingest_returns_asset_id_and_tenant_id(self):
         container = _build_test_container(chunker=lambda a, t, s: 7)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["asset_id"] == ASSET_ID
         assert result["tenant_id"] == TENANT_ID
 
     def test_successful_ingest_returns_correct_chunk_count(self):
         container = _build_test_container(chunker=lambda a, t, s: 12)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["chunk_count"] == 12
 
     def test_successful_ingest_returns_chunk_strategy(self):
         container = _build_test_container(chunker=lambda a, t, s: 3)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, "bpmn"]).get()
         assert result["chunk_strategy"] == "bpmn"
 
     def test_successful_ingest_includes_task_id(self):
         container = _build_test_container(chunker=lambda a, t, s: 1)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert "task_id" in result
         assert result["task_id"]
@@ -134,7 +134,7 @@ class TestIngestAssetHappyPath:
     def test_successful_ingest_result_is_json_serialisable(self):
         import json
         container = _build_test_container(chunker=lambda a, t, s: 5)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         # Must not raise — Celery messages must be JSON-serialisable
         json.dumps(result)
@@ -147,7 +147,7 @@ class TestIngestAssetHappyPath:
             return 2
 
         container = _build_test_container(chunker=recording_chunker)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             ingest_asset.apply(args=[ASSET_ID, TENANT_ID]).get()  # no strategy arg
         assert received_strategy == ["sop"]
 
@@ -164,7 +164,7 @@ class TestIngestAssetIdempotency:
             chunker=lambda a, t, s: 5,
             idempotency_store=id_store,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["status"] == "skipped"
         assert result["reason"] == "already_processed"
@@ -176,7 +176,7 @@ class TestIngestAssetIdempotency:
             chunker=lambda a, t, s: 5,
             idempotency_store=id_store,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["asset_id"] == ASSET_ID
         assert result["tenant_id"] == TENANT_ID
@@ -189,7 +189,7 @@ class TestIngestAssetIdempotency:
             chunker=lambda a, t, s: 3,
             idempotency_store=id_store,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, "tenant-acme", STRATEGY]).get()
         assert result["status"] == "success"
 
@@ -199,7 +199,7 @@ class TestIngestAssetIdempotency:
             chunker=lambda a, t, s: 5,
             idempotency_store=id_store,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert id_store.is_processed(ASSET_ID, TENANT_ID) is True
 
@@ -218,7 +218,7 @@ class TestIngestAssetRetryPolicy:
             raise RuntimeError("permanent failure")
 
         container = _build_test_container(chunker=counting_failing_chunker)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -230,7 +230,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -242,7 +242,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -256,7 +256,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -269,7 +269,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("boom")),
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -283,7 +283,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -296,7 +296,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -310,7 +310,7 @@ class TestIngestAssetRetryPolicy:
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
             idempotency_store=id_store,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
@@ -331,7 +331,7 @@ class TestIngestAssetRetryPolicy:
             chunker=fails_once_then_succeeds,
             dead_letter_repo=dl_repo,
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
         assert result["status"] == "success"
@@ -345,25 +345,25 @@ class TestIngestAssetRetryPolicy:
 class TestExponentialBackoffCountdown:
     def test_first_retry_countdown_is_30_seconds(self):
         """Attempt 0 (retries=0): countdown = 30 * 2^0 = 30 s."""
-        from src.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
+        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 0), 600)
         assert countdown == 30
 
     def test_second_retry_countdown_is_60_seconds(self):
         """Attempt 1 (retries=1): countdown = 30 * 2^1 = 60 s."""
-        from src.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
+        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 1), 600)
         assert countdown == 60
 
     def test_third_retry_countdown_is_120_seconds(self):
         """Attempt 2 (retries=2): countdown = 30 * 2^2 = 120 s."""
-        from src.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
+        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 2), 600)
         assert countdown == 120
 
     def test_countdown_capped_at_max_delay(self):
         """Very high retry index must not exceed MAX_RETRY_DELAY_SECONDS."""
-        from src.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS, MAX_RETRY_DELAY_SECONDS
+        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS, MAX_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 20), MAX_RETRY_DELAY_SECONDS)
         assert countdown == MAX_RETRY_DELAY_SECONDS
 
@@ -376,7 +376,7 @@ class TestIngestAssetMetrics:
     def test_dispatched_counter_increments_on_success(self):
         before = _read_counter(WORKER_TASKS_DISPATCHED)
         container = _build_test_container(chunker=lambda a, t, s: 3)
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         after = _read_counter(WORKER_TASKS_DISPATCHED)
         assert after > before
@@ -386,7 +386,7 @@ class TestIngestAssetMetrics:
         container = _build_test_container(
             chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail"))
         )
-        with patch("src.workers.tasks.ingest_task.get_worker_container", return_value=container):
+        with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         after = _read_counter(WORKER_TASKS_FAILED)

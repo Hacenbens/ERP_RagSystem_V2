@@ -31,7 +31,7 @@ class TestIngestAssetE2E:
     """Full round-trip: task dispatched to real Redis broker, result fetched."""
 
     def test_ingest_asset_dispatched_and_completed(self, require_broker):
-        from src.workers.tasks.ingest_task import ingest_asset
+        from src.infrastructure.workers.tasks.ingest_task import ingest_asset
 
         result = ingest_asset.apply_async(
             args=["e2e-asset-001", "tenant-e2e", "sop"],
@@ -44,7 +44,7 @@ class TestIngestAssetE2E:
         """Dispatches a task that will fail all retries and checks MongoDB dead-letter."""
         import pymongo
 
-        from src.workers.tasks.ingest_task import ingest_asset
+        from src.infrastructure.workers.tasks.ingest_task import ingest_asset
 
         # Use an asset_id that triggers failure in the stub chunker
         result = ingest_asset.apply_async(
