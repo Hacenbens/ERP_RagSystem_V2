@@ -89,7 +89,7 @@ def create_celery_app() -> Celery:
     )
 
     # Auto-discover tasks inside src/workers/tasks/
-    app.autodiscover_tasks(["src.workers.tasks"])
+    app.autodiscover_tasks(["src.infrastructure.workers.tasks"])
 
     return app
 

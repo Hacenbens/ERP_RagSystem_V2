@@ -42,7 +42,7 @@ from src.observability.prometheus_metrics import (
 )
 from src.observability.structured_logger import get_logger
 from src.use_cases.tasks.ingest_asset_use_case import AssetAlreadyProcessedError
-from src.workers.celery_app import celery_app
+from src.infrastructure.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
 

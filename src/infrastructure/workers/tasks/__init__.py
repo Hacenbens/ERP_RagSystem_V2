@@ -7,6 +7,6 @@ Tasks:
 """
 from __future__ import annotations
 
-from src.workers.tasks.ingest_task import ingest_asset
+from src.infrastructure.workers.tasks.ingest_task import ingest_asset
 
 __all__ = ["ingest_asset"]
