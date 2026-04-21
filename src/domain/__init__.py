@@ -8,6 +8,7 @@ from src.domain.query_intent import QueryIntent
 from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.erp_module import ErpModule
 from src.domain.chunk import Chunk
+from src.domain.table_element import TableElement
 
 __all__ = [
     "UserRole",
@@ -15,4 +16,5 @@ __all__ = [
     "ChunkStrategy",
     "ErpModule",
     "Chunk",
+    "TableElement",
 ]
