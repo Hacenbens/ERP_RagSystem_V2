@@ -39,6 +39,7 @@ class DIContainer:
         "dead_letter_repository",
         "idempotency_store",
         "ingest_use_case",
+        "embed_use_case",
     )
 
     def __init__(self) -> None:
