@@ -404,6 +404,7 @@ class TestWorkerContainerValidation:
         container.register("dead_letter_repository", object())
         container.register("idempotency_store", object())
         container.register("ingest_use_case", object())
+        container.register("embed_use_case", object())
         container.validate_worker()  # must not raise
 
     def test_validate_worker_raises_when_port_missing(self):
