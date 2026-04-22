@@ -27,11 +27,19 @@ class DIContainer:
     Required ports are declared up-front; validate() checks all are bound.
     """
 
-    # Ports that MUST be bound before the app can start
+    # Ports that MUST be bound before the API app can start
     REQUIRED_PORTS: tuple[str, ...] = (
         "user_repository",
         "jwt_handler",
         "auth_use_case",
+    )
+
+    # Ports that MUST be bound before the Celery worker can start
+    WORKER_REQUIRED_PORTS: tuple[str, ...] = (
+        "dead_letter_repository",
+        "idempotency_store",
+        "ingest_use_case",
+        "embed_use_case",
     )
 
     def __init__(self) -> None:
@@ -73,6 +81,19 @@ class DIContainer:
             raise MissingBindingError(
                 f"DIContainer.validate() failed — unbound required ports: {missing}. "
                 "Register all required ports before starting the application."
+            )
+
+    def validate_worker(self) -> None:
+        """Verify all WORKER_REQUIRED_PORTS have bindings.
+
+        Call this in the Celery worker entrypoint before processing tasks.
+        Raises MissingBindingError listing every unbound required worker port.
+        """
+        missing = [p for p in self.WORKER_REQUIRED_PORTS if p not in self._bindings]
+        if missing:
+            raise MissingBindingError(
+                f"DIContainer.validate_worker() failed — unbound worker ports: {missing}. "
+                "Register all worker ports before starting the Celery worker."
             )
 
     # ------------------------------------------------------------------

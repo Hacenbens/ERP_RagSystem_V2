@@ -7,10 +7,16 @@ from src.domain.user_role import UserRole
 from src.domain.query_intent import QueryIntent
 from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.erp_module import ErpModule
+from src.domain.chunk import Chunk
+from src.domain.table_element import TableElement
+from src.domain.embed_result import EmbedResult
 
 __all__ = [
     "UserRole",
     "QueryIntent",
     "ChunkStrategy",
     "ErpModule",
+    "Chunk",
+    "TableElement",
+    "EmbedResult",
 ]
