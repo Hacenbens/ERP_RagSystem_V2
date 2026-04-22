@@ -9,6 +9,7 @@ from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.erp_module import ErpModule
 from src.domain.chunk import Chunk
 from src.domain.table_element import TableElement
+from src.domain.embed_result import EmbedResult
 
 __all__ = [
     "UserRole",
@@ -17,4 +18,5 @@ __all__ = [
     "ErpModule",
     "Chunk",
     "TableElement",
+    "EmbedResult",
 ]
