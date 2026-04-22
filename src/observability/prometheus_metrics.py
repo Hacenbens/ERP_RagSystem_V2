@@ -129,6 +129,29 @@ WORKER_TASK_DURATION = Histogram(
 )
 
 # ---------------------------------------------------------------------------
+# Embed worker — Sprint 6
+# ---------------------------------------------------------------------------
+
+EMBED_TASKS_DISPATCHED = Counter(
+    "erp_rag_embed_tasks_dispatched_total",
+    "Total embed_asset Celery tasks dispatched",
+    ["task_name"],
+)
+
+EMBED_TASKS_FAILED = Counter(
+    "erp_rag_embed_tasks_failed_total",
+    "Total embed_asset task failures (after all retries exhausted)",
+    ["task_name"],
+)
+
+EMBED_TASK_DURATION = Histogram(
+    "erp_rag_embed_task_duration_seconds",
+    "embed_asset task execution duration in seconds",
+    ["task_name"],
+    buckets=(0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+
+# ---------------------------------------------------------------------------
 # Hybrid agent — Sprint 7
 # ---------------------------------------------------------------------------
 
@@ -200,10 +223,14 @@ __all__ = [
     "SQL_STAGE2_ERRORS",
     "SQL_STAGE3_ROWS",
     "SQL_PIPELINE_ERRORS",
-    # workers
+    # workers — ingest
     "WORKER_TASKS_DISPATCHED",
     "WORKER_TASKS_FAILED",
     "WORKER_TASK_DURATION",
+    # workers — embed
+    "EMBED_TASKS_DISPATCHED",
+    "EMBED_TASKS_FAILED",
+    "EMBED_TASK_DURATION",
     # hybrid agent
     "HYBRID_SUCCESS_RATE",
     "HYBRID_LATENCY",
