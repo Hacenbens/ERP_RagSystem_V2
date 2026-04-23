@@ -24,6 +24,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from src.domain.models.scored_chunk import ScoredChunk
 from src.domain.ports.vector_store_port import VectorStorePort
 from src.observability.structured_logger import get_logger
 
@@ -75,6 +76,30 @@ class MongoVectorStore(VectorStorePort):
             {"vector_count": 1},
         )
         return int(doc["vector_count"]) if doc else 0
+
+    # ------------------------------------------------------------------
+    # Sprint 7 — vector search (Milvus wiring deferred to Sprint 8)
+    # ------------------------------------------------------------------
+
+    def upsert(
+        self,
+        asset_id: str,
+        tenant_id: str,
+        embedding: list[float],
+        chunk_id: str,
+        content: str,
+        erp_module: str | None = None,
+    ) -> None:
+        raise NotImplementedError("Milvus wiring deferred to Sprint 8")
+
+    def search_similar(
+        self,
+        query_embedding: list[float],
+        k: int,
+        tenant_id: str,
+        erp_module: str | None = None,
+    ) -> list[ScoredChunk]:
+        raise NotImplementedError("Milvus wiring deferred to Sprint 8")
 
 
 __all__ = ["MongoVectorStore"]
