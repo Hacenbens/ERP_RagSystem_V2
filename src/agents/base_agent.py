@@ -5,11 +5,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Union
 
+from src.domain.models.hybrid_result import HybridResult
 from src.domain.models.rag_result import RAGResult
 from src.domain.models.sql_result import SQLResult
 
-# Union of all agent output types (HybridResult added in TASK 8)
-AgentResult = Union[RAGResult, SQLResult]
+AgentResult = Union[RAGResult, SQLResult, HybridResult]
 
 
 @dataclass(frozen=True)
