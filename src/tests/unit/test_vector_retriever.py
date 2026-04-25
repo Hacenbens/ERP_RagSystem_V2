@@ -3,10 +3,17 @@ Unit tests for Sprint 7 VectorRetriever and noop embedding provider.
 """
 from __future__ import annotations
 
+import httpx
+import pytest
+import json
+
 from src.domain.models.scored_chunk import ScoredChunk
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.vector_store_port import VectorStorePort
-from src.infrastructure.rag.noop_embedding_provider import NoopEmbeddingProvider
+from src.infrastructure.rag.embedding_providers import (
+    NgrokEmbeddingProvider,
+    NoopEmbeddingProvider,
+)
 from src.infrastructure.rag.vector_retriever import VectorRetriever
 
 
@@ -119,3 +126,66 @@ class TestNoopEmbeddingProvider:
 
         assert len(vector) == 768
         assert set(vector) == {0.0}
+
+
+class TestNgrokEmbeddingProvider:
+    def test_embed_calls_ngrok_endpoint_and_returns_embedding(self) -> None:
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["path"] = request.url.path
+            captured["auth"] = request.headers.get("Authorization")
+            captured["ngrok"] = request.headers.get("ngrok-skip-browser-warning")
+            captured["json"] = request.read().decode("utf-8")
+            return httpx.Response(200, json={"embedding": [0.1, 0.2, 0.3]})
+
+        provider = NgrokEmbeddingProvider(
+            base_url="https://example.ngrok.app",
+            endpoint="/embeddings",
+            model="bge-small",
+            api_key="secret",
+            transport=httpx.MockTransport(handler),
+        )
+
+        vector = provider.embed("vat rules")
+
+        assert vector == [0.1, 0.2, 0.3]
+        assert captured["path"] == "/embeddings"
+        assert captured["auth"] == "Bearer secret"
+        assert captured["ngrok"] == "true"
+        payload = json.loads(str(captured["json"]))
+        assert payload["input"] == "vat rules"
+        assert payload["model"] == "bge-small"
+
+    def test_embed_supports_openai_style_response_shape(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(200, json={"data": [{"embedding": [1, 2, 3]}]})
+
+        provider = NgrokEmbeddingProvider(
+            base_url="https://example.ngrok.app",
+            transport=httpx.MockTransport(handler),
+        )
+
+        vector = provider.embed("stock levels")
+
+        assert vector == [1.0, 2.0, 3.0]
+
+    def test_embed_raises_on_unsupported_response_shape(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(200, json={"unexpected": True})
+
+        provider = NgrokEmbeddingProvider(
+            base_url="https://example.ngrok.app",
+            transport=httpx.MockTransport(handler),
+        )
+
+        with pytest.raises(RuntimeError, match="unsupported response shape"):
+            provider.embed("finance")
+
+    def test_embed_raises_when_base_url_not_configured(self) -> None:
+        provider = NgrokEmbeddingProvider(base_url="", api_key="")
+
+        with pytest.raises(RuntimeError, match="NGROK_BASE_URL"):
+            provider.embed("vat rules")

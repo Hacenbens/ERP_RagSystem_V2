@@ -57,6 +57,16 @@ class TestInMemoryUpsert:
         results = self.store.search_similar(_unit(3, 0), k=5, tenant_id="t-1")
         assert results[0].erp_module is None
 
+    def test_upsert_idempotency_is_scoped_to_tenant(self) -> None:
+        self.store.upsert("a-1", "t-A", _unit(3, 0), "c-1", "tenant A version")
+        self.store.upsert("a-1", "t-B", _unit(3, 0), "c-1", "tenant B version")
+        results_a = self.store.search_similar(_unit(3, 0), k=5, tenant_id="t-A")
+        results_b = self.store.search_similar(_unit(3, 0), k=5, tenant_id="t-B")
+        assert len(results_a) == 1
+        assert results_a[0].content == "tenant A version"
+        assert len(results_b) == 1
+        assert results_b[0].content == "tenant B version"
+
 
 # ---------------------------------------------------------------------------
 # InMemoryVectorStore — search_similar

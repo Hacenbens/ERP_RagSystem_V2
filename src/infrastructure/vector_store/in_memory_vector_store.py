@@ -76,7 +76,10 @@ class InMemoryVectorStore(VectorStorePort):
         erp_module: str | None = None,
     ) -> None:
         """Store or replace the embedding for a single chunk (idempotent)."""
-        self._vectors = [r for r in self._vectors if r.chunk_id != chunk_id]
+        self._vectors = [
+            r for r in self._vectors
+            if not (r.chunk_id == chunk_id and r.tenant_id == tenant_id)
+        ]
         self._vectors.append(
             _VectorRecord(
                 chunk_id=chunk_id,
