@@ -18,8 +18,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from src.domain.exceptions import LLMUnavailableError
 from src.domain.ports.degraded_mode_port import DegradedModePort
 from src.infrastructure.generation.degraded_mode_service import (
