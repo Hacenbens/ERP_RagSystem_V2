@@ -8,6 +8,8 @@ from src.domain.models.routing_decision import RoutingDecision
 from src.domain.models.rag_result import RAGResult
 from src.domain.models.sql_result import SQLResult
 from src.domain.models.hybrid_result import HybridResult
+from src.domain.models.query_models import QueryRequest, QueryResponse
+from src.domain.models.upload_models import UploadResponse
 
 __all__ = [
     "ScoredChunk",
@@ -15,4 +17,7 @@ __all__ = [
     "RAGResult",
     "SQLResult",
     "HybridResult",
+    "QueryRequest",
+    "QueryResponse",
+    "UploadResponse",
 ]
