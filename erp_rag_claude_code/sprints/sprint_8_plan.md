@@ -81,11 +81,11 @@ Acceptance:
 Test file:   (ABCs — import smoke test only; covered by TASK 5 + 6)
 ```
 
-### TASK 2 — OpenAI LLM client + vLLM LLM client
+### TASK 2 — GeminiLLMClient + vLLMLLMClient
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE
 Files:       src/infrastructure/generation/__init__.py
-             src/infrastructure/generation/openai_llm_client.py
+             src/infrastructure/generation/gemini_llm_client.py
              src/infrastructure/generation/vllm_llm_client.py
 Action:      CREATE
 Effort:      0.5d
