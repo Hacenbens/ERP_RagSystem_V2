@@ -275,7 +275,7 @@ Test file:   src/tests/unit/test_metrics_collector.py
 
 ### TASK 10 — Kaggle notebook — external LLM/embedding server documentation
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE
 File:        notebooks/kaggle_llm_server.ipynb
 Action:      CREATE
 Effort:      0.5d
