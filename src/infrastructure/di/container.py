@@ -32,6 +32,9 @@ class DIContainer:
         "user_repository",
         "jwt_handler",
         "auth_use_case",
+        "route_query_use_case",
+        "rag_use_case",
+        "hybrid_use_case",
     )
 
     # Ports that MUST be bound before the Celery worker can start

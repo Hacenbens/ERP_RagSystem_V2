@@ -14,9 +14,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.testclient import TestClient
 
+from unittest.mock import MagicMock
+
 from src.infrastructure.auth.jwt_handler import JWTHandler
 from src.infrastructure.auth.user_repository import InMemoryUserRepository
 from src.infrastructure.di.container import DIContainer
+from src.infrastructure.di.factory import build_query_chain
 from src.middleware.AuthMiddleware import AuthMiddleware
 from src.middleware.RBACMiddleware import RBACMiddleware
 from src.routes.auth import router as auth_router
@@ -36,6 +39,9 @@ def build_test_app(jwt_handler: JWTHandler | None = None) -> tuple[FastAPI, DICo
     container.register("jwt_handler", jwt_handler)
     container.register("user_repository", user_repo)
     container.register("auth_use_case", auth_use_case)
+
+    # Wire query chain so container.validate() passes (added Sprint 7 Task 10)
+    build_query_chain(container)
     container.validate()
 
     app = FastAPI()
