@@ -127,7 +127,7 @@ Test file:   src/tests/unit/test_model_selector.py
 
 ### TASK 4 — DegradedModeService with per-query-hash answer cache
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE
 File:        src/infrastructure/generation/degraded_mode_service.py
 Action:      CREATE
 Effort:      0.5d
@@ -179,7 +179,7 @@ Test file:   src/tests/unit/test_model_selector.py
 
 ### TASK 6 — Integration test — degraded mode (both LLMs return 503)
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE (delivered with Task 4 — 27 tests in test_degraded_mode.py)
 File:        src/tests/integration/test_degraded_mode.py
 Action:      CREATE
 Effort:      0.5d
