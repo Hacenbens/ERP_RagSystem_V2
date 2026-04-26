@@ -1,3 +1,4 @@
+
 # Sprint 7 — Hybrid Agent — Task Plan
 **Branch:** `sprint-7/hybrid-agent`
 **Date planned:** 2026-04-23
