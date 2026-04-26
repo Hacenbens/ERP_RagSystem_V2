@@ -229,7 +229,7 @@ Test file:   src/tests/unit/test_agents.py (extend)
 
 ### TASK 8 — sql_generator_v1.yaml + evaluator_v1.yaml prompts
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE (live-tested via Gemini: 3/3 SQL queries valid, evaluator discriminates grounding correctly)
 Files:       src/prompts/versions/sql_generator_v1.yaml
              src/prompts/versions/evaluator_v1.yaml
              src/prompts/schemas/sql_generator_output.schema.json
