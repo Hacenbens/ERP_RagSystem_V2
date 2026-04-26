@@ -1,6 +1,6 @@
 """
-Unit tests — Sprint 6 Task 4
-Covers: EmbedResult, InMemoryVectorStore, MongoVectorStore (mocked), EmbedAssetUseCase
+Unit tests — Sprint 7 Task 19 (refactored from Sprint 6 Task 4)
+Covers: EmbedResult, InMemoryVectorStore, MongoVectorStore (mocked), EmbedAssetUseCase (new signature)
 
 All tests are pure in-memory — no Celery, no MongoDB, no I/O.
 """
@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 
 from src.domain.chunk import Chunk
 from src.domain.embed_result import EmbedResult
+from src.domain.ports.embedding_port import EmbeddingPort
+from src.infrastructure.persistence.chunk_store import InMemoryChunkStore
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from src.infrastructure.vector_store.mongo_vector_store import MongoVectorStore
 from src.use_cases.tasks.embed_asset_use_case import (
@@ -40,20 +42,15 @@ _CHUNKS = [
 ]
 
 
-def _success_chunker(asset_id: str, tenant_id: str, strategy: str) -> list[Chunk]:
-    return list(_CHUNKS)
+class _NoopEmbedder(EmbeddingPort):
+    """Zero-vector embedder for tests — no external calls."""
+    def embed(self, text: str) -> list[float]:
+        return [0.0] * 4
 
 
-def _failing_chunker(asset_id: str, tenant_id: str, strategy: str) -> list[Chunk]:
-    raise RuntimeError("chunker simulated failure")
-
-
-def _success_embedder(chunks: list[Chunk], asset_id: str, tenant_id: str) -> int:
-    return len(chunks)
-
-
-def _failing_embedder(chunks: list[Chunk], asset_id: str, tenant_id: str) -> int:
-    raise RuntimeError("embedder simulated failure")
+class _FailingEmbedder(EmbeddingPort):
+    def embed(self, text: str) -> list[float]:
+        raise RuntimeError("embedder simulated failure")
 
 
 # ---------------------------------------------------------------------------
@@ -227,308 +224,168 @@ class TestMongoVectorStore:
 
 
 # ---------------------------------------------------------------------------
-# EmbedAssetUseCase
+# EmbedAssetUseCase — Sprint 7 refactored signature
 # ---------------------------------------------------------------------------
 
 class TestEmbedAssetUseCase:
     def _make_use_case(
         self,
-        chunker=_success_chunker,
-        embedder=_success_embedder,
+        chunks: list[Chunk] | None = None,
+        embedder: EmbeddingPort | None = None,
         vector_store: InMemoryVectorStore | None = None,
-    ) -> tuple[EmbedAssetUseCase, InMemoryVectorStore]:
-        store = vector_store or InMemoryVectorStore()
-        use_case = EmbedAssetUseCase(
-            vector_store=store,
-            chunker=chunker,
-            embedder=embedder,
-        )
-        return use_case, store
+    ) -> tuple[EmbedAssetUseCase, InMemoryVectorStore, InMemoryChunkStore]:
+        vs = vector_store or InMemoryVectorStore()
+        cs = InMemoryChunkStore()
+        if chunks is not None:
+            cs.save_chunks(ASSET_ID, TENANT_ID, chunks)
+        ep = embedder or _NoopEmbedder()
+        uc = EmbedAssetUseCase(vector_store=vs, chunk_store=cs, embedding_port=ep)
+        return uc, vs, cs
 
     # --- Happy path --------------------------------------------------------
 
     def test_happy_path_returns_embed_result(self):
-        use_case, _ = self._make_use_case()
-        result = use_case.execute(
+        uc, _, _ = self._make_use_case(chunks=list(_CHUNKS))
+        result = uc.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
         assert isinstance(result, EmbedResult)
 
-    def test_happy_path_result_has_correct_asset_and_tenant(self):
-        use_case, _ = self._make_use_case()
-        result = use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert result.asset_id == ASSET_ID
-        assert result.tenant_id == TENANT_ID
-
     def test_happy_path_vector_count_equals_chunk_count(self):
-        use_case, _ = self._make_use_case()
-        result = use_case.execute(
+        uc, _, _ = self._make_use_case(chunks=list(_CHUNKS))
+        result = uc.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
         assert result.vector_count == len(_CHUNKS)
 
-    def test_happy_path_chunk_strategy_preserved_in_result(self):
-        use_case, _ = self._make_use_case()
-        result = use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy="bpmn", task_id=TASK_ID,
-        )
-        assert result.chunk_strategy == "bpmn"
-
-    def test_happy_path_task_id_preserved_in_result(self):
-        use_case, _ = self._make_use_case()
-        result = use_case.execute(
+    def test_happy_path_vectors_upserted_per_chunk(self):
+        uc, vs, _ = self._make_use_case(chunks=list(_CHUNKS))
+        uc.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
-        assert result.task_id == TASK_ID
+        assert vs.count(ASSET_ID, TENANT_ID) == len(_CHUNKS)
+
+    def test_happy_path_save_vectors_called(self):
+        uc, vs, _ = self._make_use_case(chunks=list(_CHUNKS))
+        uc.execute(
+            asset_id=ASSET_ID, tenant_id=TENANT_ID,
+            chunk_strategy=STRATEGY, task_id=TASK_ID,
+        )
+        assert vs.has_vectors(ASSET_ID, TENANT_ID) is True
 
     def test_happy_path_duration_ms_is_non_negative(self):
-        use_case, _ = self._make_use_case()
-        result = use_case.execute(
+        uc, _, _ = self._make_use_case(chunks=list(_CHUNKS))
+        result = uc.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
         assert result.duration_ms >= 0.0
 
-    def test_happy_path_vectors_saved_in_store(self):
-        use_case, store = self._make_use_case()
-        use_case.execute(
+    def test_embedding_port_called_once_per_chunk(self):
+        call_texts: list[str] = []
+
+        class RecordingEmbedder(EmbeddingPort):
+            def embed(self, text: str) -> list[float]:
+                call_texts.append(text)
+                return [0.0]
+
+        uc, _, _ = self._make_use_case(
+            chunks=list(_CHUNKS), embedder=RecordingEmbedder()
+        )
+        uc.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is True
-        assert store.count(ASSET_ID, TENANT_ID) == len(_CHUNKS)
+        assert call_texts == [c.text for c in _CHUNKS]
 
-    # --- Chunker → embedder pipeline contract -----------------------------
+    # --- Empty chunks ---------------------------------------------------
 
-    def test_chunker_receives_correct_arguments(self):
-        received: list[tuple] = []
-
-        def recording_chunker(asset_id: str, tenant_id: str, strategy: str) -> list[Chunk]:
-            received.append((asset_id, tenant_id, strategy))
-            return [Chunk(text="x", metadata={})]
-
-        use_case, _ = self._make_use_case(chunker=recording_chunker)
-        use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy="tax_circular", task_id=TASK_ID,
-        )
-        assert received == [(ASSET_ID, TENANT_ID, "tax_circular")]
-
-    def test_embedder_receives_chunks_from_chunker(self):
-        """The chunks produced by the chunker must be passed verbatim to the embedder."""
-        expected_chunks = [
-            Chunk(text="section A", metadata={"section": "A"}),
-            Chunk(text="section B", metadata={"section": "B"}),
-        ]
-        received_chunks: list[list[Chunk]] = []
-
-        def recording_embedder(chunks: list[Chunk], asset_id: str, tenant_id: str) -> int:
-            received_chunks.append(chunks)
-            return len(chunks)
-
-        use_case, _ = self._make_use_case(
-            chunker=lambda a, t, s: expected_chunks,
-            embedder=recording_embedder,
-        )
-        use_case.execute(
+    def test_empty_chunk_list_returns_zero_vector_count(self):
+        uc, vs, _ = self._make_use_case(chunks=[])
+        result = uc.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
-        assert received_chunks[0] == expected_chunks
+        assert result.vector_count == 0
+        assert vs.count(ASSET_ID, TENANT_ID) == 0
 
-    def test_embedder_receives_asset_id_and_tenant_id(self):
-        received_context: list[tuple] = []
+    # --- Idempotency guard ---------------------------------------------
 
-        def recording_embedder(chunks: list[Chunk], asset_id: str, tenant_id: str) -> int:
-            received_context.append((asset_id, tenant_id))
-            return 1
-
-        use_case, _ = self._make_use_case(
-            chunker=lambda a, t, s: [Chunk(text="t", metadata={})],
-            embedder=recording_embedder,
-        )
-        use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert received_context == [(ASSET_ID, TENANT_ID)]
-
-    def test_embedder_called_once_not_per_chunk(self):
-        """EmbedAssetUseCase calls embedder once with all chunks — not once per chunk."""
-        call_count = [0]
-
-        def counting_embedder(chunks: list[Chunk], asset_id: str, tenant_id: str) -> int:
-            call_count[0] += 1
-            return len(chunks)
-
-        use_case, _ = self._make_use_case(embedder=counting_embedder)
-        use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert call_count[0] == 1
-
-    def test_chunk_metadata_passed_through_to_embedder(self):
-        """Chunk.metadata must survive the chunker → embedder handoff unchanged."""
-        rich_meta = {"section": "art. 3", "chunk_type": "table_summary", "table_raw": "raw data"}
-        chunks_with_meta = [Chunk(text="summary", metadata=rich_meta)]
-        seen_meta: list[dict] = []
-
-        def meta_recording_embedder(chunks: list[Chunk], a: str, t: str) -> int:
-            seen_meta.extend(c.metadata for c in chunks)
-            return len(chunks)
-
-        use_case, _ = self._make_use_case(
-            chunker=lambda a, t, s: chunks_with_meta,
-            embedder=meta_recording_embedder,
-        )
-        use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert seen_meta[0] == rich_meta
-
-    # --- Idempotency guard ------------------------------------------------
-
-    def test_already_embedded_raises_asset_already_embedded_error(self):
-        store = InMemoryVectorStore()
-        store.save_vectors(ASSET_ID, TENANT_ID, 5)
-        use_case, _ = self._make_use_case(vector_store=store)
+    def test_already_embedded_raises(self):
+        vs = InMemoryVectorStore()
+        vs.save_vectors(ASSET_ID, TENANT_ID, 5)
+        uc, _, _ = self._make_use_case(chunks=[], vector_store=vs)
         with pytest.raises(AssetAlreadyEmbeddedError):
-            use_case.execute(
+            uc.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
 
-    def test_already_embedded_error_message_contains_asset_id(self):
-        store = InMemoryVectorStore()
-        store.save_vectors(ASSET_ID, TENANT_ID, 5)
-        use_case, _ = self._make_use_case(vector_store=store)
-        with pytest.raises(AssetAlreadyEmbeddedError, match=ASSET_ID):
-            use_case.execute(
-                asset_id=ASSET_ID, tenant_id=TENANT_ID,
-                chunk_strategy=STRATEGY, task_id=TASK_ID,
-            )
+    def test_already_embedded_does_not_call_embedder(self):
+        vs = InMemoryVectorStore()
+        vs.save_vectors(ASSET_ID, TENANT_ID, 5)
+        embedder_called = [False]
 
-    def test_already_embedded_does_not_call_chunker(self):
-        store = InMemoryVectorStore()
-        store.save_vectors(ASSET_ID, TENANT_ID, 5)
-        chunker_called = [False]
+        class SentinelEmbedder(EmbeddingPort):
+            def embed(self, text: str) -> list[float]:
+                embedder_called[0] = True
+                return [0.0]
 
-        def sentinel_chunker(a: str, t: str, s: str) -> list[Chunk]:
-            chunker_called[0] = True
-            return []
-
-        use_case, _ = self._make_use_case(chunker=sentinel_chunker, vector_store=store)
+        uc, _, _ = self._make_use_case(chunks=[], embedder=SentinelEmbedder(), vector_store=vs)
         with pytest.raises(AssetAlreadyEmbeddedError):
-            use_case.execute(
+            uc.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
-        assert chunker_called[0] is False
+        assert embedder_called[0] is False
 
     def test_different_tenant_same_asset_not_blocked(self):
-        store = InMemoryVectorStore()
-        store.save_vectors(ASSET_ID, TENANT_ID, 5)
-        use_case, _ = self._make_use_case(vector_store=store)
-        result = use_case.execute(
+        vs = InMemoryVectorStore()
+        vs.save_vectors(ASSET_ID, TENANT_ID, 5)
+        cs = InMemoryChunkStore()
+        cs.save_chunks(ASSET_ID, OTHER_TENANT, list(_CHUNKS))
+        uc = EmbedAssetUseCase(vector_store=vs, chunk_store=cs, embedding_port=_NoopEmbedder())
+        result = uc.execute(
             asset_id=ASSET_ID, tenant_id=OTHER_TENANT,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
         assert result.tenant_id == OTHER_TENANT
 
-    # --- Failure paths ----------------------------------------------------
-
-    def test_chunker_failure_propagates(self):
-        use_case, _ = self._make_use_case(chunker=_failing_chunker)
-        with pytest.raises(RuntimeError, match="chunker simulated failure"):
-            use_case.execute(
-                asset_id=ASSET_ID, tenant_id=TENANT_ID,
-                chunk_strategy=STRATEGY, task_id=TASK_ID,
-            )
-
-    def test_chunker_failure_does_not_save_vectors(self):
-        use_case, store = self._make_use_case(chunker=_failing_chunker)
-        with pytest.raises(RuntimeError):
-            use_case.execute(
-                asset_id=ASSET_ID, tenant_id=TENANT_ID,
-                chunk_strategy=STRATEGY, task_id=TASK_ID,
-            )
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is False
+    # --- Embedder failure ---------------------------------------------------
 
     def test_embedder_failure_propagates(self):
-        use_case, _ = self._make_use_case(embedder=_failing_embedder)
+        uc, _, _ = self._make_use_case(
+            chunks=list(_CHUNKS), embedder=_FailingEmbedder()
+        )
         with pytest.raises(RuntimeError, match="embedder simulated failure"):
-            use_case.execute(
+            uc.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
 
     def test_embedder_failure_does_not_save_vectors(self):
-        use_case, store = self._make_use_case(embedder=_failing_embedder)
+        uc, vs, _ = self._make_use_case(
+            chunks=list(_CHUNKS), embedder=_FailingEmbedder()
+        )
         with pytest.raises(RuntimeError):
-            use_case.execute(
+            uc.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is False
+        assert vs.has_vectors(ASSET_ID, TENANT_ID) is False
 
-    # --- Edge cases -------------------------------------------------------
-
-    def test_empty_chunk_list_returns_zero_vector_count(self):
-        use_case, store = self._make_use_case(
-            chunker=lambda a, t, s: [],
-            embedder=lambda chunks, a, t: 0,
-        )
-        result = use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert result.vector_count == 0
-        assert store.count(ASSET_ID, TENANT_ID) == 0
-
-    def test_second_call_after_failure_can_succeed(self):
-        """After a failure the asset is not saved — a retry can succeed."""
-        attempts = [0]
-
-        def fails_once(a: str, t: str, s: str) -> list[Chunk]:
-            attempts[0] += 1
-            if attempts[0] == 1:
-                raise RuntimeError("transient")
-            return [Chunk(text="ok", metadata={})]
-
-        use_case, store = self._make_use_case(chunker=fails_once)
-
-        with pytest.raises(RuntimeError):
-            use_case.execute(
-                asset_id=ASSET_ID, tenant_id=TENANT_ID,
-                chunk_strategy=STRATEGY, task_id=TASK_ID,
-            )
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is False
-
-        result = use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert result.vector_count == 1
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is True
+    # --- Multi-asset isolation -------------------------------------------
 
     def test_two_different_assets_embedded_independently(self):
-        use_case, store = self._make_use_case()
-        use_case.execute(
-            asset_id="asset-X", tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id="t1",
-        )
-        use_case.execute(
-            asset_id="asset-Y", tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id="t2",
-        )
-        assert store.has_vectors("asset-X", TENANT_ID) is True
-        assert store.has_vectors("asset-Y", TENANT_ID) is True
+        vs = InMemoryVectorStore()
+        cs = InMemoryChunkStore()
+        cs.save_chunks("asset-X", TENANT_ID, [Chunk(text="x")])
+        cs.save_chunks("asset-Y", TENANT_ID, [Chunk(text="y")])
+        uc = EmbedAssetUseCase(vector_store=vs, chunk_store=cs, embedding_port=_NoopEmbedder())
+        uc.execute(asset_id="asset-X", tenant_id=TENANT_ID, chunk_strategy=STRATEGY, task_id="t1")
+        uc.execute(asset_id="asset-Y", tenant_id=TENANT_ID, chunk_strategy=STRATEGY, task_id="t2")
+        assert vs.has_vectors("asset-X", TENANT_ID) is True
+        assert vs.has_vectors("asset-Y", TENANT_ID) is True

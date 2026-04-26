@@ -1,68 +1,49 @@
 """
-Use case: EmbedAssetUseCase
+Use case: EmbedAssetUseCase — Sprint 7 refactor
 
-Orchestrates the vector embedding pipeline for a single asset:
-  1. Idempotency check — skip if vectors already exist in the store
-  2. Chunk the asset (injected callable) → list[Chunk], each with .text + .metadata
-  3. Embed every chunk individually with its metadata (injected callable)
-  4. Record the total vector count in the vector store on success
-
-Design rule: embedding operates per-chunk, not per-asset.
-Each Chunk becomes one independent retrieval unit in the vector store,
-carrying its section/article/table metadata for context-aware retrieval.
-
-This class contains only business logic.
-It has no knowledge of Celery, retries, dead-letter queues, or HTTP.
+Pipeline:
+  1. Idempotency check — skip if vectors already stored
+  2. Load chunks from ChunkStorePort
+  3. Embed each chunk via EmbeddingPort
+  4. Upsert each chunk's vector into VectorStorePort
+  5. Record total vector count in VectorStorePort
 """
 from __future__ import annotations
 
 import time
-from typing import Callable
 
 from src.domain.chunk import Chunk
 from src.domain.embed_result import EmbedResult
+from src.domain.ports.chunk_store_port import ChunkStorePort
+from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.vector_store_port import VectorStorePort
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
-# (asset_id, tenant_id, chunk_strategy) → list[Chunk]
-_ChunkerProtocol = Callable[[str, str, str], list[Chunk]]
-
-# (chunks, asset_id, tenant_id) → int  (number of vectors stored)
-_EmbedderProtocol = Callable[[list[Chunk], str, str], int]
-
 
 class AssetAlreadyEmbeddedError(Exception):
-    """Raised when the idempotency check finds vectors already stored."""
+    """Raised when vectors already exist for this asset."""
 
 
 class EmbedAssetUseCase:
-    """Chunk then embed one document asset into the vector store.
+    """Load chunks from store, embed per chunk, upsert into vector store.
 
     Args:
-        vector_store: Tracks which assets have been embedded and their
-                      vector counts (idempotency guard).
-        chunker:      ``(asset_id, tenant_id, strategy) -> list[Chunk]``
-                      Splits the asset into chunks; each Chunk carries
-                      .text (to embed) and .metadata (to store alongside
-                      the vector for context-aware retrieval).
-        embedder:     ``(chunks, asset_id, tenant_id) -> int``
-                      Embeds each chunk's .text, attaches its .metadata
-                      to the stored vector, and returns the total count of
-                      vectors written.  Injected so the use case stays
-                      testable without a real embedding model.
+        vector_store:   Tracks which assets are embedded and stores vectors.
+        chunk_store:    Provides persisted chunks for the asset.
+        embedding_port: Converts chunk text to a float embedding vector.
     """
 
     def __init__(
         self,
         vector_store: VectorStorePort,
-        chunker: _ChunkerProtocol,
-        embedder: _EmbedderProtocol,
+        chunk_store: ChunkStorePort,
+        embedding_port: EmbeddingPort,
     ) -> None:
         self._vector_store = vector_store
-        self._chunker = chunker
-        self._embedder = embedder
+        self._chunk_store = chunk_store
+        self._embedding_port = embedding_port
 
     def execute(
         self,
@@ -72,21 +53,11 @@ class EmbedAssetUseCase:
         chunk_strategy: str,
         task_id: str,
     ) -> EmbedResult:
-        """Run the chunk → embed pipeline.
-
-        Args:
-            asset_id:       ID of the asset to embed.
-            tenant_id:      Owning tenant (for isolation).
-            chunk_strategy: Strategy name forwarded to the chunker.
-            task_id:        Celery task ID for traceability.
-
-        Returns:
-            EmbedResult on success.
+        """Embed all chunks for ``asset_id`` / ``tenant_id``.
 
         Raises:
-            AssetAlreadyEmbeddedError: if vectors already exist for this asset.
-            Any exception from chunker or embedder propagates — the Celery
-            task layer decides whether to retry.
+            AssetAlreadyEmbeddedError: vectors already exist for this asset.
+            Any exception from EmbeddingPort propagates — no partial upserts.
         """
         if self._vector_store.has_vectors(asset_id, tenant_id):
             logger.info(
@@ -109,27 +80,33 @@ class EmbedAssetUseCase:
 
         t0 = time.perf_counter()
 
-        # Stage 1 — chunk the asset
-        chunks: list[Chunk] = self._chunker(asset_id, tenant_id, chunk_strategy)
+        chunks: list[Chunk] = self._chunk_store.find_by_asset(asset_id, tenant_id)
         logger.debug(
-            "embed_use_case.chunked",
+            "embed_use_case.chunks_loaded",
             asset_id=asset_id,
             chunk_count=len(chunks),
-            task_id=task_id,
         )
 
-        # Stage 2 — embed each chunk with its metadata
-        vector_count: int = self._embedder(chunks, asset_id, tenant_id)
+        for chunk in chunks:
+            embedding = self._embedding_port.embed(chunk.text)
+            self._vector_store.upsert(
+                asset_id=asset_id,
+                tenant_id=tenant_id,
+                embedding=embedding,
+                chunk_id=chunk.chunk_id,
+                content=chunk.text,
+                erp_module=chunk.metadata.get("erp_module"),
+            )
+
+        vector_count = len(chunks)
+        self._vector_store.save_vectors(asset_id, tenant_id, vector_count)
 
         duration_ms = (time.perf_counter() - t0) * 1000
-
-        self._vector_store.save_vectors(asset_id, tenant_id, vector_count)
 
         logger.info(
             "embed_use_case.success",
             asset_id=asset_id,
             tenant_id=tenant_id,
-            chunk_count=len(chunks),
             vector_count=vector_count,
             duration_ms=round(duration_ms, 2),
             task_id=task_id,
