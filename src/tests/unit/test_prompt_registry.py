@@ -215,3 +215,163 @@ class TestYamlLoading:
         pv = registry.resolve("rag_answer")
         assert pv.metrics.classification_accuracy is None
         assert pv.metrics.sample_size == 0
+
+
+# ---------------------------------------------------------------------------
+# TestSqlGeneratorPrompt — Sprint 8 Task 8A
+# ---------------------------------------------------------------------------
+
+class TestSqlGeneratorPrompt:
+    def test_sql_generator_resolves_from_registry(self, registry: PromptRegistry) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        assert pv.prompt_name == "sql_generator"
+        assert pv.deployment_status == "production"
+
+    def test_sql_generator_has_correct_id(self, registry: PromptRegistry) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        assert pv.id == "sql_generator_v1"
+
+    def test_sql_generator_prompt_text_contains_tenant_id_instruction(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        assert "tenant_id" in pv.prompt_text
+
+    def test_sql_generator_schema_file_exists_and_is_valid_json(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        schema_file = PROMPTS_DIR / pv.schema_path
+        assert schema_file.exists()
+        schema = json.loads(schema_file.read_text())
+        assert schema.get("$schema") == "http://json-schema.org/draft-07/schema#"
+
+    def test_sql_generator_validate_output_passes_valid_payload(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        valid = {
+            "sql": "SELECT id FROM invoices WHERE tenant_id = 'acme'",
+            "tables_used": ["invoices"],
+            "confidence": 0.95,
+        }
+        registry.validate_output(pv, valid)  # must not raise
+
+    def test_sql_generator_validate_output_rejects_missing_sql_field(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        bad = {"tables_used": ["invoices"], "confidence": 0.5}
+        with pytest.raises(jsonschema.ValidationError):
+            registry.validate_output(pv, bad)
+
+    def test_sql_generator_validate_output_rejects_empty_tables_used(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        bad = {"sql": "SELECT 1", "tables_used": [], "confidence": 0.9}
+        with pytest.raises(jsonschema.ValidationError):
+            registry.validate_output(pv, bad)
+
+    def test_sql_generator_validate_output_rejects_confidence_above_one(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("sql_generator", "production")
+        bad = {
+            "sql": "SELECT id FROM invoices WHERE tenant_id = 'acme'",
+            "tables_used": ["invoices"],
+            "confidence": 1.5,
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            registry.validate_output(pv, bad)
+
+
+# ---------------------------------------------------------------------------
+# TestEvaluatorPrompt — Sprint 8 Task 8B
+# ---------------------------------------------------------------------------
+
+class TestEvaluatorPrompt:
+    def test_evaluator_resolves_from_registry(self, registry: PromptRegistry) -> None:
+        pv = registry.resolve("evaluator", "production")
+        assert pv.prompt_name == "evaluator"
+        assert pv.deployment_status == "production"
+
+    def test_evaluator_has_correct_id(self, registry: PromptRegistry) -> None:
+        pv = registry.resolve("evaluator", "production")
+        assert pv.id == "evaluator_v1"
+
+    def test_evaluator_schema_file_exists_and_is_valid_json(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("evaluator", "production")
+        schema_file = PROMPTS_DIR / pv.schema_path
+        assert schema_file.exists()
+        schema = json.loads(schema_file.read_text())
+        assert schema.get("$schema") == "http://json-schema.org/draft-07/schema#"
+
+    def test_evaluator_validate_output_passes_valid_payload(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("evaluator", "production")
+        valid = {
+            "grounding_score": 0.9,
+            "hallucination_rate": 0.1,
+            "faithfulness": 0.95,
+            "completeness": 0.8,
+            "relevance": 0.88,
+            "reasoning": "Answer is well grounded in the provided context.",
+        }
+        registry.validate_output(pv, valid)  # must not raise
+
+    def test_evaluator_validate_output_rejects_score_above_one(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("evaluator", "production")
+        bad = {
+            "grounding_score": 1.5,
+            "hallucination_rate": 0.1,
+            "faithfulness": 0.9,
+            "completeness": 0.8,
+            "relevance": 0.9,
+            "reasoning": "test",
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            registry.validate_output(pv, bad)
+
+    def test_evaluator_validate_output_rejects_missing_reasoning(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("evaluator", "production")
+        bad = {
+            "grounding_score": 0.9,
+            "hallucination_rate": 0.1,
+            "faithfulness": 0.9,
+            "completeness": 0.8,
+            "relevance": 0.9,
+            # "reasoning" missing
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            registry.validate_output(pv, bad)
+
+    def test_evaluator_validate_output_rejects_additional_properties(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("evaluator", "production")
+        bad = {
+            "grounding_score": 0.9,
+            "hallucination_rate": 0.1,
+            "faithfulness": 0.9,
+            "completeness": 0.8,
+            "relevance": 0.9,
+            "reasoning": "ok",
+            "extra_field": "not allowed",
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            registry.validate_output(pv, bad)
+
+    def test_evaluator_prompt_text_contains_all_placeholders(
+        self, registry: PromptRegistry
+    ) -> None:
+        pv = registry.resolve("evaluator", "production")
+        for placeholder in ("{{question}}", "{{context}}", "{{answer}}"):
+            assert placeholder in pv.prompt_text
