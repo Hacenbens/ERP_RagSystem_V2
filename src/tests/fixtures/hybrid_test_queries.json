@@ -1,0 +1,162 @@
+[
+  {
+    "id": "HQ-001",
+    "query": "What is the VAT rate for pharmaceutical products and how many VAT transactions did we record this quarter?",
+    "tenant_id": "test-tenant",
+    "erp_module": "finance",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-002",
+    "query": "What is the total revenue recorded this quarter across all business units?",
+    "tenant_id": "test-tenant",
+    "erp_module": "finance",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-003",
+    "query": "Show invoice aging analysis and the applicable payment terms policy for overdue accounts.",
+    "tenant_id": "test-tenant",
+    "erp_module": "finance",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-004",
+    "query": "What are the VAT exemption rules for medical devices under EU directive 2017/745?",
+    "tenant_id": "test-tenant",
+    "erp_module": "finance",
+    "expected_sql_source": false,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-005",
+    "query": "List all outstanding accounts payable invoices over 90 days.",
+    "tenant_id": "test-tenant",
+    "erp_module": "finance",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-006",
+    "query": "What are the current stock levels for our top 10 SKUs and what does the reorder policy say?",
+    "tenant_id": "test-tenant",
+    "erp_module": "inventory",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-007",
+    "query": "Which product categories are below the minimum stock alert threshold?",
+    "tenant_id": "test-tenant",
+    "erp_module": "inventory",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-008",
+    "query": "What are the best practices for inventory cycle counting and reconciliation?",
+    "tenant_id": "test-tenant",
+    "erp_module": "inventory",
+    "expected_sql_source": false,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-009",
+    "query": "List products expiring within the next 30 days and the disposal procedure that applies.",
+    "tenant_id": "test-tenant",
+    "erp_module": "inventory",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-010",
+    "query": "How many purchase orders are pending approval and what is their total value?",
+    "tenant_id": "test-tenant",
+    "erp_module": "procurement",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-011",
+    "query": "What are the supplier performance scores this quarter and what SLA thresholds apply?",
+    "tenant_id": "test-tenant",
+    "erp_module": "procurement",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-012",
+    "query": "What is the procurement policy for emergency purchases above 50 000 EUR?",
+    "tenant_id": "test-tenant",
+    "erp_module": "procurement",
+    "expected_sql_source": false,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-013",
+    "query": "Which supplier contracts are up for renewal in the next 60 days?",
+    "tenant_id": "test-tenant",
+    "erp_module": "procurement",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-014",
+    "query": "List active customer contracts by region and the applicable SLA terms.",
+    "tenant_id": "test-tenant",
+    "erp_module": "crm",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-015",
+    "query": "Which customers have the highest churn risk score in the current quarter?",
+    "tenant_id": "test-tenant",
+    "erp_module": "crm",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-016",
+    "query": "What is the escalation handling procedure for tier-1 customer complaints?",
+    "tenant_id": "test-tenant",
+    "erp_module": "crm",
+    "expected_sql_source": false,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-017",
+    "query": "How many new customers were onboarded this month and what onboarding steps are required?",
+    "tenant_id": "test-tenant",
+    "erp_module": "crm",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-018",
+    "query": "What is the current capacity utilization per warehouse location?",
+    "tenant_id": "test-tenant",
+    "erp_module": "warehouse",
+    "expected_sql_source": true,
+    "expected_rag_source": false
+  },
+  {
+    "id": "HQ-019",
+    "query": "What are the compliance requirements for exporting goods to non-EU countries?",
+    "tenant_id": "test-tenant",
+    "erp_module": "warehouse",
+    "expected_sql_source": false,
+    "expected_rag_source": true
+  },
+  {
+    "id": "HQ-020",
+    "query": "List goods received but not yet invoiced and the matching procedure that should apply.",
+    "tenant_id": "test-tenant",
+    "erp_module": "warehouse",
+    "expected_sql_source": true,
+    "expected_rag_source": true
+  }
+]
