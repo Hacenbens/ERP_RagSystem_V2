@@ -137,7 +137,7 @@ class TestNgrokEmbeddingProvider:
             captured["auth"] = request.headers.get("Authorization")
             captured["ngrok"] = request.headers.get("ngrok-skip-browser-warning")
             captured["json"] = request.read().decode("utf-8")
-            return httpx.Response(200, json={"embedding": [0.1, 0.2, 0.3]})
+            return httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
 
         provider = NgrokEmbeddingProvider(
             base_url="https://example.ngrok.app",
@@ -154,13 +154,13 @@ class TestNgrokEmbeddingProvider:
         assert captured["auth"] == "Bearer secret"
         assert captured["ngrok"] == "true"
         payload = json.loads(str(captured["json"]))
-        assert payload["input"] == "vat rules"
+        assert payload["texts"] == ["vat rules"]
         assert payload["model"] == "bge-small"
 
-    def test_embed_supports_openai_style_response_shape(self) -> None:
+    def test_embed_returns_first_embedding_from_batch_response(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             del request
-            return httpx.Response(200, json={"data": [{"embedding": [1, 2, 3]}]})
+            return httpx.Response(200, json={"embeddings": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]})
 
         provider = NgrokEmbeddingProvider(
             base_url="https://example.ngrok.app",
@@ -181,7 +181,7 @@ class TestNgrokEmbeddingProvider:
             transport=httpx.MockTransport(handler),
         )
 
-        with pytest.raises(RuntimeError, match="unsupported response shape"):
+        with pytest.raises(RuntimeError, match="unsupported shape"):
             provider.embed("finance")
 
     def test_embed_raises_when_base_url_not_configured(self) -> None:

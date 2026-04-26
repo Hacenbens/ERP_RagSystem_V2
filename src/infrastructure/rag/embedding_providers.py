@@ -24,7 +24,7 @@ class NgrokEmbeddingProvider(EmbeddingPort):
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._base_url = (base_url or os.environ.get("NGROK_BASE_URL", "")).rstrip("/")
-        self._endpoint = endpoint or os.environ.get("NGROK_EMBEDDING_ENDPOINT", "/embeddings")
+        self._endpoint = endpoint or os.environ.get("NGROK_EMBEDDING_ENDPOINT", "/embed")
         self._model = model or os.environ.get("NGROK_EMBEDDING_MODEL", "")
         self._api_key = api_key or os.environ.get("NGROK_API_KEY", "")
         self._timeout_s = timeout_s
@@ -35,7 +35,7 @@ class NgrokEmbeddingProvider(EmbeddingPort):
         if not self._base_url:
             raise RuntimeError("NGROK_BASE_URL is not configured for embeddings")
 
-        payload: dict[str, Any] = {"input": text}
+        payload: dict[str, Any] = {"texts": [text]}
         if self._model:
             payload["model"] = self._model
 
@@ -66,19 +66,14 @@ class NgrokEmbeddingProvider(EmbeddingPort):
         return headers
 
     def _parse_embedding(self, payload: dict[str, Any]) -> list[float]:
-        if "embedding" in payload and isinstance(payload["embedding"], list):
-            return [float(value) for value in payload["embedding"]]
+        # Server contract: {"embeddings": [[float, ...]]}
+        embeddings = payload.get("embeddings")
+        if isinstance(embeddings, list) and embeddings and isinstance(embeddings[0], list):
+            return [float(v) for v in embeddings[0]]
 
-        data = payload.get("data")
-        if (
-            isinstance(data, list)
-            and data
-            and isinstance(data[0], dict)
-            and isinstance(data[0].get("embedding"), list)
-        ):
-            return [float(value) for value in data[0]["embedding"]]
-
-        raise RuntimeError("Embedding endpoint returned an unsupported response shape")
+        raise RuntimeError(
+            f"Embedding endpoint returned unsupported shape — keys: {list(payload.keys())}"
+        )
 
 
 class NoopEmbeddingProvider(EmbeddingPort):
