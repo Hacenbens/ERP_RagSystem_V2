@@ -9,7 +9,9 @@ Both raise ``ConnectionError`` on network failures or 5xx responses so that
 """
 from __future__ import annotations
 
+from src.infrastructure.generation.circuit_breaker import CircuitBreaker
 from src.infrastructure.generation.gemini_llm_client import GeminiLLMClient
+from src.infrastructure.generation.model_selector import ModelSelector
 from src.infrastructure.generation.vllm_llm_client import vLLMLLMClient
 
-__all__ = ["GeminiLLMClient", "vLLMLLMClient"]
+__all__ = ["CircuitBreaker", "GeminiLLMClient", "ModelSelector", "vLLMLLMClient"]

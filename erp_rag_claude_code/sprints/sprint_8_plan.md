@@ -102,9 +102,9 @@ Acceptance:
 Test file:   src/tests/unit/test_model_selector.py (mocked at httpx / openai level)
 ```
 
-### TASK 3 — ModelSelector with circuit breaker + OpenAI → vLLM fallback
+### TASK 3 — ModelSelector with circuit breaker + Gemini → vLLM fallback
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE
 File:        src/infrastructure/generation/model_selector.py
 Action:      CREATE
 Effort:      0.5d
