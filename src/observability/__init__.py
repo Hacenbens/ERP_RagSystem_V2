@@ -11,6 +11,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "get_logger",
+    "MetricsCollector",
     "prometheus_metrics",
 ]
 
