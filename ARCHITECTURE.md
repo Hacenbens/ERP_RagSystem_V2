@@ -216,3 +216,9 @@ Policy lookup is delegated to `erp_rbac_policy.py` via three public functions:
 | `erp_rag_pii_detections_total` | Counter | entity_type | PIIMaskingMiddleware |
 
 `MIDDLEWARE_VIOLATIONS` label values: `auth` · `rate_limit_user` · `rate_limit_ip` · `rbac_module` · `pii`
+
+---
+
+## 4. External Server Setup (Kaggle / self-hosted)
+
+See [`notebooks/kaggle_llm_server.ipynb`](notebooks/kaggle_llm_server.ipynb) for step-by-step instructions on starting the vLLM OpenAI-compatible server (port 8000) and the embedding server (port 8001) on a Kaggle GPU instance.

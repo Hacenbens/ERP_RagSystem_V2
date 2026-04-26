@@ -194,6 +194,23 @@ DEGRADED_MODE_ACTIVATIONS = Counter(
 )
 
 # ---------------------------------------------------------------------------
+# Per-request stage latency + token usage — Sprint 8 MetricsCollector
+# ---------------------------------------------------------------------------
+
+QUERY_STAGE_LATENCY_MS = Histogram(
+    "erp_rag_query_latency_ms",
+    "Per-pipeline-stage latency in milliseconds",
+    ["stage"],
+    buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
+)
+
+TOKENS_USED = Counter(
+    "erp_rag_tokens_used_total",
+    "Total LLM tokens consumed",
+    ["type"],  # "prompt" | "completion"
+)
+
+# ---------------------------------------------------------------------------
 # Query classifier — Sprint 9
 # ---------------------------------------------------------------------------
 
@@ -245,6 +262,9 @@ __all__ = [
     "LLM_FAILURE_RATE",
     "CIRCUIT_BREAKER_STATE",
     "DEGRADED_MODE_ACTIVATIONS",
+    # per-request accumulator
+    "QUERY_STAGE_LATENCY_MS",
+    "TOKENS_USED",
     # classifier
     "CLASSIFIER_BLOCKED_RATE",
     "CLASSIFIER_ACCURACY",
