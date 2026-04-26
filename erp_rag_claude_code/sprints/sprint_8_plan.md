@@ -151,7 +151,7 @@ Test file:   src/tests/integration/test_degraded_mode.py
 
 ### TASK 5 — Unit tests — ModelSelector (fallback + circuit breaker)
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE
 File:        src/tests/unit/test_model_selector.py
 Action:      CREATE
 Effort:      1d
