@@ -1,5 +1,5 @@
 """
-Integration tests — Sprint 6 Task 4
+Integration tests — Sprint 6 Task 4 (updated Sprint 7 Task 19)
 Covers: embed_asset Celery task (retry policy, dead-letter, idempotency, metrics)
 
 Strategy
@@ -10,6 +10,8 @@ Strategy
 - Dependencies (use case, dead-letter repo, vector store) are injected via
   a test-specific DI container, monkeypatched onto get_worker_container().
 - Prometheus counters are read directly from the metric objects after each test.
+- Sprint 7 refactor: EmbedAssetUseCase now requires ChunkStorePort and
+  EmbeddingPort. Stub implementations replace the old chunker/embedder callables.
 """
 from __future__ import annotations
 
@@ -22,6 +24,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
 from src.domain.chunk import Chunk
+from src.domain.ports.chunk_store_port import ChunkStorePort
+from src.domain.ports.embedding_port import EmbeddingPort
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from src.infrastructure.workers.celery_app import celery_app
@@ -55,23 +59,101 @@ _CHUNKS = [
 
 
 # ---------------------------------------------------------------------------
+# Stubs
+# ---------------------------------------------------------------------------
+
+class _StubEmbeddingPort(EmbeddingPort):
+    """Returns a constant zero vector — no HTTP calls."""
+
+    def embed(self, text: str) -> list[float]:
+        return [0.0] * 768
+
+
+class _SeedChunkStore(ChunkStorePort):
+    """Returns pre-seeded chunks — no database I/O."""
+
+    def __init__(self, chunks: list[Chunk] | None = None) -> None:
+        self._chunks = list(chunks) if chunks is not None else list(_CHUNKS)
+
+    def save_chunks(self, asset_id: str, tenant_id: str, chunks: list[Chunk]) -> int:
+        return len(chunks)
+
+    def find_by_asset(self, asset_id: str, tenant_id: str) -> list[Chunk]:
+        return list(self._chunks)
+
+    def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
+        return 0
+
+
+class _FailingChunkStore(ChunkStorePort):
+    """Raises RuntimeError on every find_by_asset call — counts invocations."""
+
+    def __init__(self, message: str = "chunk store failure") -> None:
+        self.call_count = 0
+        self._message = message
+
+    def save_chunks(self, asset_id: str, tenant_id: str, chunks: list[Chunk]) -> int:
+        return 0
+
+    def find_by_asset(self, asset_id: str, tenant_id: str) -> list[Chunk]:
+        self.call_count += 1
+        raise RuntimeError(self._message)
+
+    def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
+        return 0
+
+
+class _TransientFailingChunkStore(ChunkStorePort):
+    """Fails on the first find_by_asset call, succeeds on subsequent calls."""
+
+    def __init__(self, chunks: list[Chunk] | None = None) -> None:
+        self._chunks = list(chunks) if chunks is not None else list(_CHUNKS)
+        self._attempts = 0
+
+    def save_chunks(self, asset_id: str, tenant_id: str, chunks: list[Chunk]) -> int:
+        return len(chunks)
+
+    def find_by_asset(self, asset_id: str, tenant_id: str) -> list[Chunk]:
+        self._attempts += 1
+        if self._attempts == 1:
+            raise RuntimeError("transient")
+        return list(self._chunks)
+
+    def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
+        return 0
+
+
+class _FailingEmbeddingPort(EmbeddingPort):
+    """Raises RuntimeError on every embed call — counts invocations."""
+
+    def __init__(self, message: str = "embedder down") -> None:
+        self.call_count = 0
+        self._message = message
+
+    def embed(self, text: str) -> list[float]:
+        self.call_count += 1
+        raise RuntimeError(self._message)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _build_test_container(
-    chunker,
-    embedder=None,
     dead_letter_repo: InMemoryDeadLetterRepository | None = None,
     vector_store: InMemoryVectorStore | None = None,
+    chunk_store: ChunkStorePort | None = None,
+    embedding_port: EmbeddingPort | None = None,
 ) -> DIContainer:
     """Build a minimal DI container wiring embed_use_case."""
     dl_repo = dead_letter_repo or InMemoryDeadLetterRepository()
     vs = vector_store or InMemoryVectorStore()
-    _embedder = embedder or (lambda chunks, a, t: len(chunks))
+    _chunk_store = chunk_store or _SeedChunkStore()
+    _embedding_port = embedding_port or _StubEmbeddingPort()
     use_case = EmbedAssetUseCase(
         vector_store=vs,
-        chunker=chunker,
-        embedder=_embedder,
+        chunk_store=_chunk_store,
+        embedding_port=_embedding_port,
     )
     container = DIContainer()
     container.register("dead_letter_repository", dl_repo)
@@ -109,39 +191,39 @@ def celery_eager_mode():
 
 class TestEmbedAssetHappyPath:
     def test_successful_embed_returns_success_status(self):
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["status"] == "success"
 
     def test_successful_embed_returns_asset_id_and_tenant_id(self):
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["asset_id"] == ASSET_ID
         assert result["tenant_id"] == TENANT_ID
 
     def test_successful_embed_returns_correct_vector_count(self):
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["vector_count"] == len(_CHUNKS)
 
     def test_successful_embed_returns_chunk_strategy(self):
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, "bpmn"]).get()
         assert result["chunk_strategy"] == "bpmn"
 
     def test_successful_embed_includes_duration_ms(self):
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert "duration_ms" in result
         assert result["duration_ms"] >= 0
 
     def test_successful_embed_includes_task_id(self):
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert "task_id" in result
@@ -149,22 +231,17 @@ class TestEmbedAssetHappyPath:
 
     def test_successful_embed_result_is_json_serialisable(self):
         import json
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         json.dumps(result)
 
     def test_default_chunk_strategy_is_sop(self):
-        received_strategy: list[str] = []
-
-        def recording_chunker(a: str, t: str, s: str) -> list[Chunk]:
-            received_strategy.append(s)
-            return _CHUNKS
-
-        container = _build_test_container(chunker=recording_chunker)
+        """Task default strategy arg is 'sop' — result reflects this."""
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
-            embed_asset.apply(args=[ASSET_ID, TENANT_ID]).get()
-        assert received_strategy == ["sop"]
+            result = embed_asset.apply(args=[ASSET_ID, TENANT_ID]).get()  # no strategy arg
+        assert result["chunk_strategy"] == "sop"
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +252,7 @@ class TestEmbedAssetIdempotency:
     def test_second_call_same_asset_returns_skipped(self):
         vs = InMemoryVectorStore()
         vs.save_vectors(ASSET_ID, TENANT_ID, 5)
-        container = _build_test_container(
-            chunker=lambda a, t, s: _CHUNKS,
-            vector_store=vs,
-        )
+        container = _build_test_container(vector_store=vs)
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["status"] == "skipped"
@@ -187,10 +261,7 @@ class TestEmbedAssetIdempotency:
     def test_skipped_result_contains_asset_and_tenant(self):
         vs = InMemoryVectorStore()
         vs.save_vectors(ASSET_ID, TENANT_ID, 5)
-        container = _build_test_container(
-            chunker=lambda a, t, s: _CHUNKS,
-            vector_store=vs,
-        )
+        container = _build_test_container(vector_store=vs)
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["asset_id"] == ASSET_ID
@@ -200,20 +271,14 @@ class TestEmbedAssetIdempotency:
         """Tenant isolation: embedding for tenant-A must not block tenant-B."""
         vs = InMemoryVectorStore()
         vs.save_vectors(ASSET_ID, TENANT_ID, 5)
-        container = _build_test_container(
-            chunker=lambda a, t, s: _CHUNKS,
-            vector_store=vs,
-        )
+        container = _build_test_container(vector_store=vs)
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             result = embed_asset.apply(args=[ASSET_ID, "tenant-acme", STRATEGY]).get()
         assert result["status"] == "success"
 
     def test_first_call_saves_vectors_in_store(self):
         vs = InMemoryVectorStore()
-        container = _build_test_container(
-            chunker=lambda a, t, s: _CHUNKS,
-            vector_store=vs,
-        )
+        container = _build_test_container(vector_store=vs)
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert vs.has_vectors(ASSET_ID, TENANT_ID) is True
@@ -226,24 +291,23 @@ class TestEmbedAssetIdempotency:
 
 class TestEmbedAssetRetryPolicy:
     def test_failing_task_retries_exactly_max_retries_times(self):
-        """Chunker called MAX_RETRIES + 1 times total (1 original + 3 retries)."""
-        call_count = [0]
+        """Pipeline attempted MAX_RETRIES + 1 times total (1 original + 3 retries).
 
-        def counting_failing_chunker(a: str, t: str, s: str) -> list[Chunk]:
-            call_count[0] += 1
-            raise RuntimeError("permanent failure")
-
-        container = _build_test_container(chunker=counting_failing_chunker)
+        _FailingChunkStore.call_count increments once per task attempt,
+        so a count of MAX_RETRIES + 1 confirms the correct retry chain.
+        """
+        failing_store = _FailingChunkStore("permanent failure")
+        container = _build_test_container(chunk_store=failing_store)
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
-        assert call_count[0] == MAX_RETRIES + 1
+        assert failing_store.call_count == MAX_RETRIES + 1
 
     def test_failing_task_writes_exactly_one_dead_letter_entry(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunk_store=_FailingChunkStore("fail"),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -255,7 +319,7 @@ class TestEmbedAssetRetryPolicy:
     def test_dead_letter_entry_has_correct_asset_and_tenant(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunk_store=_FailingChunkStore("fail"),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -269,7 +333,7 @@ class TestEmbedAssetRetryPolicy:
     def test_dead_letter_entry_has_correct_retry_count(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunk_store=_FailingChunkStore("fail"),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -282,7 +346,7 @@ class TestEmbedAssetRetryPolicy:
     def test_dead_letter_entry_has_exception_type_and_message(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("embed_boom")),
+            chunk_store=_FailingChunkStore("embed_boom"),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -296,7 +360,7 @@ class TestEmbedAssetRetryPolicy:
     def test_dead_letter_entry_has_task_name(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunk_store=_FailingChunkStore("fail"),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -309,7 +373,7 @@ class TestEmbedAssetRetryPolicy:
     def test_dead_letter_entry_args_contain_asset_and_tenant(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunk_store=_FailingChunkStore("fail"),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -323,7 +387,7 @@ class TestEmbedAssetRetryPolicy:
     def test_vectors_not_saved_after_full_retry_exhaustion(self):
         vs = InMemoryVectorStore()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunk_store=_FailingChunkStore("fail"),
             vector_store=vs,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -335,16 +399,8 @@ class TestEmbedAssetRetryPolicy:
     def test_transient_failure_then_success_writes_no_dead_letter(self):
         """Task succeeds before retries exhausted — no dead-letter entry."""
         dl_repo = InMemoryDeadLetterRepository()
-        attempts = [0]
-
-        def fails_once_then_succeeds(a: str, t: str, s: str) -> list[Chunk]:
-            attempts[0] += 1
-            if attempts[0] == 1:
-                raise RuntimeError("transient")
-            return _CHUNKS
-
         container = _build_test_container(
-            chunker=fails_once_then_succeeds,
+            chunk_store=_TransientFailingChunkStore(),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
@@ -354,24 +410,18 @@ class TestEmbedAssetRetryPolicy:
         assert dl_repo.count() == 0
 
     def test_embedder_failure_triggers_retry_chain(self):
-        """Embedder raising must also go through the retry/dead-letter path."""
-        call_count = [0]
-
-        def failing_embedder(chunks: list[Chunk], a: str, t: str) -> int:
-            call_count[0] += 1
-            raise RuntimeError("embedder down")
-
+        """EmbeddingPort raising must go through the retry/dead-letter path."""
+        failing_port = _FailingEmbeddingPort("embedder down")
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: _CHUNKS,
-            embedder=failing_embedder,
+            embedding_port=failing_port,
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
 
-        assert call_count[0] == MAX_RETRIES + 1
+        assert failing_port.call_count == MAX_RETRIES + 1
         assert dl_repo.count() == 1
 
 
@@ -404,7 +454,7 @@ class TestExponentialBackoffCountdown:
 class TestEmbedAssetMetrics:
     def test_dispatched_counter_increments_on_success(self):
         before = _read_counter(EMBED_TASKS_DISPATCHED)
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert _read_counter(EMBED_TASKS_DISPATCHED) > before
@@ -414,19 +464,14 @@ class TestEmbedAssetMetrics:
         vs = InMemoryVectorStore()
         vs.save_vectors(ASSET_ID, TENANT_ID, 5)
         before = _read_counter(EMBED_TASKS_DISPATCHED)
-        container = _build_test_container(
-            chunker=lambda a, t, s: _CHUNKS,
-            vector_store=vs,
-        )
+        container = _build_test_container(vector_store=vs)
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert _read_counter(EMBED_TASKS_DISPATCHED) > before
 
     def test_failed_counter_increments_after_retry_exhaustion(self):
         before = _read_counter(EMBED_TASKS_FAILED)
-        container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail"))
-        )
+        container = _build_test_container(chunk_store=_FailingChunkStore("fail"))
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
                 embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
@@ -434,7 +479,7 @@ class TestEmbedAssetMetrics:
 
     def test_failed_counter_not_incremented_on_success(self):
         before = _read_counter(EMBED_TASKS_FAILED)
-        container = _build_test_container(chunker=lambda a, t, s: _CHUNKS)
+        container = _build_test_container()
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container", return_value=container):
             embed_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert _read_counter(EMBED_TASKS_FAILED) == before

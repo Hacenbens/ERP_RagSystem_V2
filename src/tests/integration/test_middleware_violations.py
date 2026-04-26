@@ -43,6 +43,7 @@ from src.tests.fixtures.jwt_fixtures import (
     make_valid_token,
     make_wrong_algorithm_token,
 )
+from src.infrastructure.di.factory import build_query_chain
 from src.use_cases.auth_user import AuthUseCase
 
 
@@ -75,6 +76,7 @@ def _build_auth_app(jwt_handler):
     container.register("jwt_handler", jwt_handler)
     container.register("user_repository", user_repo)
     container.register("auth_use_case", auth_use_case)
+    build_query_chain(container)
     container.validate()
 
     app = FastAPI()
@@ -106,6 +108,7 @@ def _build_pii_app(jwt_handler):
     container.register("jwt_handler", jwt_handler)
     container.register("user_repository", user_repo)
     container.register("auth_use_case", auth_use_case)
+    build_query_chain(container)
     container.validate()
 
     app = FastAPI()

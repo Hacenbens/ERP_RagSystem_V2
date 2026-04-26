@@ -39,6 +39,9 @@ from starlette.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
 from src.domain.chunk import Chunk
+from src.domain.ports.asset_storage_port import AssetStoragePort
+from src.domain.ports.chunk_store_port import ChunkStorePort
+from src.domain.ports.embedding_port import EmbeddingPort
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from src.infrastructure.workers.celery_app import celery_app
@@ -86,6 +89,40 @@ SPRINT6_METRIC_NAMES = [
 # Helpers
 # ---------------------------------------------------------------------------
 
+class _StubAssetStorage(AssetStoragePort):
+    def save_bytes(self, tenant_id, asset_id, filename, content):
+        return f"{tenant_id}/{asset_id}/{filename}"
+    def read_bytes(self, tenant_id, storage_key):
+        return b"stub content"
+    def delete_bytes(self, tenant_id, storage_key):
+        pass
+
+
+class _StubChunkStore(ChunkStorePort):
+    def __init__(self, chunks=None):
+        self._chunks = list(chunks) if chunks is not None else list(_CHUNKS)
+    def save_chunks(self, asset_id, tenant_id, chunks):
+        return len(chunks)
+    def find_by_asset(self, asset_id, tenant_id):
+        return list(self._chunks)
+    def delete_by_asset(self, asset_id, tenant_id):
+        return 0
+
+
+class _FailingChunkStore(ChunkStorePort):
+    def save_chunks(self, asset_id, tenant_id, chunks):
+        return 0
+    def find_by_asset(self, asset_id, tenant_id):
+        raise RuntimeError("fail")
+    def delete_by_asset(self, asset_id, tenant_id):
+        return 0
+
+
+class _StubEmbeddingPort(EmbeddingPort):
+    def embed(self, text):
+        return [0.0] * 768
+
+
 def _counter_value(metric, task_name: str) -> float:
     try:
         return metric.labels(task_name=task_name)._value.get()
@@ -93,11 +130,23 @@ def _counter_value(metric, task_name: str) -> float:
         return 0.0
 
 
-def _build_ingest_container(chunker=None, dead_letter_repo=None) -> DIContainer:
+def _build_ingest_container(
+    chunker=None,
+    dead_letter_repo=None,
+    asset_storage=None,
+    chunk_store=None,
+) -> DIContainer:
     dl_repo = dead_letter_repo or InMemoryDeadLetterRepository()
     id_store = InMemoryIdempotencyStore()
-    _chunker = chunker or (lambda a, t, s: 3)
-    use_case = IngestAssetUseCase(idempotency_store=id_store, chunker=_chunker)
+    _storage = asset_storage or _StubAssetStorage()
+    _chunk_store = chunk_store or _StubChunkStore()
+    _chunker = chunker or (lambda content, strategy: [Chunk(text=f"c{i}") for i in range(3)])
+    use_case = IngestAssetUseCase(
+        idempotency_store=id_store,
+        asset_storage=_storage,
+        chunk_store=_chunk_store,
+        chunker=_chunker,
+    )
     c = DIContainer()
     c.register("dead_letter_repository", dl_repo)
     c.register("idempotency_store", id_store)
@@ -107,16 +156,20 @@ def _build_ingest_container(chunker=None, dead_letter_repo=None) -> DIContainer:
 
 
 def _build_embed_container(
-    chunker=None,
-    embedder=None,
     dead_letter_repo=None,
     vector_store=None,
+    chunk_store=None,
+    embedding_port=None,
 ) -> DIContainer:
     dl_repo = dead_letter_repo or InMemoryDeadLetterRepository()
     vs = vector_store or InMemoryVectorStore()
-    _chunker = chunker or (lambda a, t, s: _CHUNKS)
-    _embedder = embedder or (lambda chunks, a, t: len(chunks))
-    use_case = EmbedAssetUseCase(vector_store=vs, chunker=_chunker, embedder=_embedder)
+    _chunk_store = chunk_store or _StubChunkStore()
+    _embedding_port = embedding_port or _StubEmbeddingPort()
+    use_case = EmbedAssetUseCase(
+        vector_store=vs,
+        chunk_store=_chunk_store,
+        embedding_port=_embedding_port,
+    )
     c = DIContainer()
     c.register("dead_letter_repository", dl_repo)
     c.register("embed_use_case", use_case)
@@ -237,7 +290,7 @@ class TestWorkerMetricsAfterIngestDispatch:
         from src.infrastructure.workers.tasks.ingest_task import TASK_NAME
         before = _counter_value(WORKER_TASKS_FAILED, TASK_NAME)
         container = _build_ingest_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail"))
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail"))
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container",
                    return_value=container):
@@ -277,7 +330,7 @@ class TestEmbedMetricsAfterEmbedDispatch:
         from src.infrastructure.workers.tasks.embed_task import TASK_NAME
         before = _counter_value(EMBED_TASKS_FAILED, TASK_NAME)
         container = _build_embed_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail"))
+            chunk_store=_FailingChunkStore()
         )
         with patch("src.infrastructure.workers.tasks.embed_task.get_worker_container",
                    return_value=container):

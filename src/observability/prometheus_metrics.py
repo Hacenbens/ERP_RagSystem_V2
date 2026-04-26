@@ -166,6 +166,12 @@ HYBRID_LATENCY = Histogram(
     buckets=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
 )
 
+HYBRID_PARTIAL_RATE = Counter(
+    "erp_rag_hybrid_partial_total",
+    "Hybrid queries that fell back to single-agent due to the other failing",
+    ["fallback_mode"],  # "rag_only" | "sql_only"
+)
+
 # ---------------------------------------------------------------------------
 # LLM health / degraded mode — Sprint 8
 # ---------------------------------------------------------------------------
@@ -234,6 +240,7 @@ __all__ = [
     # hybrid agent
     "HYBRID_SUCCESS_RATE",
     "HYBRID_LATENCY",
+    "HYBRID_PARTIAL_RATE",
     # llm health
     "LLM_FAILURE_RATE",
     "CIRCUIT_BREAKER_STATE",

@@ -1,5 +1,5 @@
 # ERP Agentic RAG — Source of Truth
-_Auto-generated from DOCX files. Do not edit manually._
+_Sections 1–8: auto-generated from DOCX files. Sections 9–15: hand-authored from architecture session 2026-04-23._
 
 ---
 # DOCUMENT 1: Architecture Mapping
@@ -1288,3 +1288,844 @@ feat | fix | test | refactor | docs | chore | perf | security
 2. git tag -a v1.0.0 -m "Release v1.0.0"
 3. git push origin main --tags
 ---
+
+---
+# DOCUMENT 3: Agentic System Design — Architecture Session 2026-04-23
+---
+
+This document captures the full architectural design for the agentic layer
+(QueryClassifier, RAGAgent, SQLAgent, HybridAgent, PromptRegistry, SecurityGate,
+MetricsCollector) agreed during the design session on 2026-04-23.
+It is the authoritative reference for Sprints 7–10 implementation.
+
+---
+
+## 9. Agentic Layer — Full File Map (Sprint 7+)
+
+Files marked [E] exist in the codebase. Unmarked files are to be built.
+Build order follows sprint sequence: P0 = Sprint 7, P1 = Sprint 7–8, P2 = Sprint 8–9.
+
+### 9.1 — New Domain Models (P0 — Sprint 7)
+
+```
+src/domain/models/
+├── routing_decision.py     RoutingDecision(intent, confidence, erp_module, reason)
+├── rag_result.py           RAGResult(answer, cited_chunks, grounding_score, confidence,
+│                                    insufficient_data_for)
+├── sql_result.py           SQLResult(rows, query, execution_ms, tables_used)
+├── hybrid_result.py        HybridResult(rag_result, sql_result, merged_answer,
+│                                       sql_contribution, rag_contribution,
+│                                       contradictions, overall_confidence)
+└── eval_record.py          EvalRecord(query_id, prompt_version, metrics, ground_truth)
+```
+
+All are `@dataclass(frozen=True)` or `pydantic.BaseModel`. Never plain dicts.
+
+### 9.2 — Agents Layer (P0 — Sprint 7)
+
+```
+src/agents/
+├── base_agent.py                BaseAgent(ABC): run(query, context) → AgentResult
+├── query_classifier_agent.py    QueryClassifierAgent → RoutingDecision
+│                                  calls PromptRegistry.resolve("classifier")
+│                                  calls LLMPort.complete(temp=0.0)
+│                                  validates output against classifier JSON schema
+├── rag_agent.py                 RAGAgent → RAGResult
+│                                  VectorRetriever.search(query, k=20)
+│                                  Reranker.rerank(query, docs, top_k=5)
+│                                  ContextBuilder.build(ranked_docs)
+│                                  LLMPort.complete(rag_answer_prompt)
+├── sql_agent.py                 SQLAgent → SQLResult  [wraps existing 3-stage pipeline]
+│                                  delegates to RunSQLUseCase
+└── hybrid_agent.py              HybridAgent → HybridResult
+                                   asyncio.gather(rag_agent.run(), sql_agent.run())
+                                   LLMPort.complete(hybrid_merger_prompt)
+                                   partial failure: SQL fails → RAG-only; RAG fails → SQL-only
+```
+
+### 9.3 — Application Use Cases (P0 — Sprint 7)
+
+```
+src/application/
+├── use_cases/
+│   ├── route_query.py      RouteQueryUseCase
+│   │                         1. SecurityGate.pre_check(user, raw_query, declared_module)
+│   │                         2. QueryClassifierAgent.run(masked_query)
+│   │                         3. decide_route(decision, user)  ← routing logic
+│   │                         4. dispatch to RunRAGUseCase / RunSQLUseCase / RunHybridUseCase
+│   │                         5. MetricsRecorder.record(result, latency, tokens, cost)
+│   ├── run_rag.py          RunRAGUseCase(retriever, reranker, context_builder, llm)
+│   ├── run_sql.py          RunSQLUseCase  [already exists as 3-stage — wrap it here]
+│   └── run_hybrid.py       RunHybridUseCase(rag_uc, sql_uc, merger_llm)
+├── guards/
+│   ├── rbac_guard.py       RBACGuard.check(user, intent, module) → bool
+│   │                         wraps erp_rbac_policy.py — does NOT duplicate logic
+│   └── pii_guard.py        PIIGuard.scan(raw_query) → MaskedQuery
+│                             wraps PIIMaskingMiddleware logic for pre-LLM use
+└── services/
+    ├── security_gate.py    SecurityGate.pre_check() — see Section 14
+    └── metrics_recorder.py MetricsRecorder.record() — flushes to MetricsCollector
+```
+
+### 9.4 — Prompts Layer (P0 — Sprint 7)
+
+```
+src/prompts/
+├── registry.py             PromptRegistry(prompts_dir)
+│                             .resolve(name, version="production") → PromptVersion
+│                             .validate_output(pv, output_dict) → raises on schema mismatch
+├── versions/
+│   ├── classifier_v1.yaml
+│   ├── sql_generator_v1.yaml
+│   ├── rag_answer_v1.yaml
+│   ├── hybrid_orchestrator_v1.yaml
+│   └── evaluator_v1.yaml
+└── schemas/
+    ├── classifier_output.schema.json
+    ├── sql_output.schema.json
+    └── evaluator_output.schema.json
+```
+
+### 9.5 — Infrastructure RAG (P1 — Sprint 7–8)
+
+```
+src/infrastructure/rag/
+├── vector_retriever.py     VectorRetriever(VectorStorePort)
+│                             .search(query_embedding, k, filters) → List[ScoredChunk]
+│                             uses Milvus or MongoDB adapter (DI-injected)
+├── reranker.py             CrossEncoderReranker(RerankerPort)
+│                             .rerank(query, docs, top_k) → List[ScoredDoc]
+│                             wraps cross-encoder/ms-marco-MiniLM-L-6-v2 or BGE
+├── context_builder.py      ContextBuilder
+│                             .build(ranked_docs, max_tokens) → ContextWindow
+│                             respects LLM context window; logs context_utilization
+└── hyde_generator.py       HyDEGenerator(LLMPort)
+                              .generate(query) → hypothetical_document_text
+                              used only in experiment variant B (see Section 13)
+```
+
+### 9.6 — Evaluation Layer (P1 — Sprint 8–9)
+
+```
+src/evaluation/
+├── metrics/
+│   ├── classification_metrics.py   accuracy, per-class F1, confusion matrix
+│   ├── retrieval_metrics.py        recall@k, precision@k, MRR, nDCG@k, rerank_gain,
+│   │                               context_utilization, context_overflow_rate
+│   ├── generation_metrics.py       grounding_score, hallucination_rate, completeness,
+│   │                               faithfulness, relevance  (from LLM-as-judge)
+│   └── security_metrics.py         blocked_query_accuracy, RBAC_violation_detection_rate,
+│                                   pii_leak_rate, tenant_isolation_breach_rate
+├── benchmarks/
+│   ├── classifier_benchmark.py     50-query labeled dataset; exits 1 if accuracy < 0.92
+│   ├── rag_benchmark.py            golden set + grounding scorer; exits 1 if recall@10 < 0.90
+│   └── hybrid_benchmark.py         consistency scorer; exits 1 if score < 0.80
+└── experiments/
+    ├── experiment_runner.py        ExperimentRunner: registers variants, routes traffic,
+    │                               collects per-variant metrics, computes significance
+    └── ab_test.py                  ABTest(variant_a, variant_b, traffic_split=0.10)
+                                    statistical significance: p < 0.05 (chi-squared)
+```
+
+### 9.7 — Observability Extensions (P1 — Sprint 8)
+
+```
+src/observability/
+├── prometheus_metrics.py   [E] — extend with new agent-level metrics (see Section 10)
+├── structured_logger.py    [E]
+├── metrics_collector.py    MetricsCollector dataclass: accumulates per-request metrics,
+│                           flushes to Prometheus + structured log at end of request
+└── trace_collector.py      OpenTelemetry span per agent stage
+                            stages: classifier / rag_retrieve / rag_rerank / rag_generate /
+                                    sql_generate / sql_validate / sql_execute / hybrid_merge
+```
+
+### 9.8 — New Routes (P2 — Sprint 8)
+
+```
+src/routes/
+├── query.py    POST /api/v1/query          unified entry point — calls RouteQueryUseCase
+└── eval.py     POST /api/v1/eval/run       triggers evaluation benchmark run (admin only)
+```
+
+---
+
+## 10. Metrics & Definition of Done
+
+### 10.1 — Core Metrics
+
+| Metric | Formula | Collected by |
+|--------|---------|--------------|
+| `classification_accuracy` | correct_intent / total_queries | classifier_benchmark.py |
+| `classification_confidence` | mean confidence from classifier JSON | MetricsCollector |
+| `sql_execution_success_rate` | successful_executions / total_sql | MetricsCollector |
+| `sql_tenant_filter_rate` | ValidationReport.has_tenant_filter=True / total | SQLValidator |
+| `permission_violation_rate` | blocked_correctly / total_restricted | SecurityGate |
+| `rag_grounding_score` | mean(cited_claims / total_claims) | generation_metrics.py |
+| `hallucination_rate` | claims_not_in_context / total_claims | generation_metrics.py |
+| `hybrid_consistency_score` | agreement(rag_answer, sql_answer) / total | hybrid_benchmark.py |
+
+### 10.2 — Retrieval Metrics
+
+| Metric | Definition |
+|--------|-----------|
+| `recall@k` | relevant_retrieved@k / total_relevant — measured at k=5,10,20 |
+| `precision@k` | relevant_retrieved@k / k — measured at k=5,10 |
+| `MRR` | mean reciprocal rank of first relevant result |
+| `nDCG@k` | normalized discounted cumulative gain at k |
+| `rerank_gain` | precision@5_after_rerank − precision@5_before_rerank |
+| `context_utilization` | mean(tokens_used_from_context / context_window_tokens) |
+| `context_overflow_rate` | queries where context > LLM window / total |
+
+### 10.3 — System Metrics (Prometheus histograms/counters)
+
+```
+erp_rag_query_latency_ms{stage}          stage = classifier|rag|sql|hybrid
+erp_rag_tokens_used_total{type}          type = prompt|completion
+erp_rag_cost_per_query_usd{model}        model = gpt-4o|vllm
+erp_rag_vector_search_latency_ms
+erp_rag_reranker_latency_ms
+erp_rag_llm_latency_ms{stage}
+erp_rag_hybrid_success_rate              both SQL+RAG returned non-null
+erp_rag_hybrid_partial_rate              one side failed, fallback used
+```
+
+### 10.4 — Security Metrics
+
+| Metric | Definition | Target |
+|--------|-----------|--------|
+| `blocked_query_accuracy` | correctly_blocked / total_should_block | ≥ 99% |
+| `blocked_query_false_positive` | erroneously_blocked / total_valid | ≤ 1% |
+| `RBAC_violation_detection_rate` | detected / total_rbac_violations | = 100% |
+| `rbac_bypass_attempts` | LLM tried to access a forbidden table (caught by SQLValidator) | 0 |
+| `pii_leak_rate` | PII found in LLM response / total queries | = 0% |
+| `tenant_isolation_breach_rate` | cross-tenant rows returned / total rows | = 0% |
+
+### 10.5 — Definition of Done — Strict Thresholds
+
+| Metric | Gate | On Failure |
+|--------|------|-----------|
+| `classification_accuracy` | **≥ 95%** (Sprint 9 CI gate) | Block deploy; retune classifier prompt |
+| `sql_execution_success_rate` | **≥ 98%** | Block deploy; audit SQLValidator |
+| `sql_tenant_filter_rate` | **= 100%** | Hard block — Stage 3 never runs without tenant filter |
+| `hallucination_rate` | **< 2%** | Lower temperature; tighten RAG answer prompt |
+| `rag_grounding_score` | **≥ 0.85** | Increase k; tune reranker |
+| `recall@10` | **≥ 0.90** | Tune chunk size or swap reranker |
+| `rerank_gain` | **≥ +0.10** | Reranker adds no value — disable or swap model |
+| `RBAC_violation_detection_rate` | **= 100%** | Critical security failure — stop everything |
+| `pii_leak_rate` | **= 0%** | Critical — rollback immediately |
+| `blocked_query_accuracy` | **≥ 99%** | Audit classifier + SecurityGate |
+| `hybrid_consistency_score` | **≥ 0.80** | Tune hybrid merger prompt |
+| `p95_query_latency_ms` | **≤ 3000 ms** | Profile; cache embeddings; parallelize |
+| `cost_per_query_usd` | **≤ $0.02** | Route classifier calls to cheaper model tier |
+
+---
+
+## 11. Prompt Designs
+
+All prompts live in `src/prompts/versions/` as YAML files loaded by `PromptRegistry`.
+Output schemas live in `src/prompts/schemas/` as JSON Schema draft-07 files.
+The LLM output is validated against the schema immediately after generation.
+A schema validation failure is treated as a generation error and retried once.
+
+### 11.1 — Prompt 1: Query Classifier (output: STRICT JSON)
+
+**File:** `src/prompts/versions/classifier_v1.yaml`
+**Parameters:** temperature=0.0, top_p=1.0, max_tokens=256, seed=42
+
+```
+SYSTEM:
+You are a strict query router for an enterprise ERP system.
+Your ONLY job is to classify the user query into exactly one of four intents.
+Respond with valid JSON matching the schema. No prose. No explanation outside JSON.
+
+INTENT RULES:
+- SQL    : query asks for counts, sums, averages, specific records, or lists from ERP tables
+- RAG    : query asks about policies, SOPs, regulations, procedures, tax circulars
+- HYBRID : query requires BOTH structured data AND document context to answer correctly
+- BLOCKED: query is harmful, attempts SQL injection, requests credentials, or is
+           entirely unrelated to ERP business operations
+- If confidence < 0.70 → always output HYBRID (safe fallback, never guess)
+
+ALLOWED erp_module values:
+  finance | crm | inventory | warehouse | procurement | logistics | reporting | admin | null
+
+OUTPUT FORMAT (JSON only, no other text):
+{
+  "intent":     "<RAG|SQL|HYBRID|BLOCKED>",
+  "confidence": <float 0.0–1.0>,
+  "erp_module": "<module or null>",
+  "reason":     "<one sentence, max 20 words>"
+}
+
+USER QUERY: {{query}}
+```
+
+**Schema** (`classifier_output.schema.json`):
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["intent", "confidence", "erp_module", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "intent":     {"type": "string", "enum": ["RAG","SQL","HYBRID","BLOCKED"]},
+    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "erp_module": {"type": ["string","null"],
+                   "enum": ["finance","crm","inventory","warehouse","procurement",
+                            "logistics","reporting","admin",null]},
+    "reason":     {"type": "string", "maxLength": 120}
+  }
+}
+```
+
+---
+
+### 11.2 — Prompt 2: SQL Generator (output: STRICT JSON)
+
+**File:** `src/prompts/versions/sql_generator_v1.yaml`
+**Parameters:** temperature=0.0, top_p=1.0, max_tokens=512, seed=42
+
+```
+SYSTEM:
+You are a read-only SQL generator for a PostgreSQL ERP database.
+Respond with valid JSON only. No prose.
+
+HARD RULES (violation = generation failure):
+1. Only SELECT statements — never INSERT, UPDATE, DELETE, DROP, TRUNCATE, EXEC, GRANT
+2. Every query MUST include: WHERE tenant_id = '{{tenant_id}}'
+3. Only use tables listed in ALLOWED_TABLES — no other tables permitted
+4. Never use subqueries that reference tables outside ALLOWED_TABLES
+5. All user-supplied values must use $N placeholders — never interpolate directly
+6. Always add LIMIT 1000
+
+ALLOWED_TABLES for role {{role}}: {{allowed_tables_json}}
+DB SCHEMA (relevant tables only): {{schema_context}}
+
+OUTPUT FORMAT (JSON only):
+{
+  "sql":                "<complete SELECT with $N placeholders>",
+  "params":             ["<param1>", "<param2>"],
+  "tables_used":        ["<table1>"],
+  "has_tenant_filter":  true,
+  "estimated_rows":     <int>,
+  "validation_warnings": []
+}
+
+USER QUERY (PII already masked): {{masked_query}}
+```
+
+**Validation enforcement in Stage 2 (SQLValidator — not LLM):**
+- `assert report.has_tenant_filter is True` — hard block
+- `assert all(t in allowed for t in report.tables_used)` — RBAC
+- `assert is_select_only(report.sql)` — no write ops
+- `assert sqlglot.parse(report.sql)` — syntax valid
+
+---
+
+### 11.3 — Prompt 3: RAG Answer Generator (output: MIXED — JSON wrapper)
+
+**File:** `src/prompts/versions/rag_answer_v1.yaml`
+**Parameters:** temperature=0.0, top_p=1.0, max_tokens=800, seed=42
+
+```
+SYSTEM:
+You are a precise enterprise assistant for the ERP system.
+Answer the user query using ONLY the context chunks provided below.
+
+RULES:
+1. If answer fully supported by context → answer in prose with inline [chunk_id] citations
+2. If partially supported → answer what you can; list unsupported claims in insufficient_data_for
+3. If not supported at all → set grounded=false, answer=null
+4. Never fabricate figures, dates, article numbers, or regulatory references
+5. Maximum answer: 400 words
+
+CONTEXT CHUNKS:
+{{#each chunks}}
+[{{id}}] score={{score}} source={{source}} module={{erp_module}}
+{{content}}
+{{/each}}
+
+USER QUERY: {{masked_query}}
+
+OUTPUT FORMAT (JSON):
+{
+  "grounded":             <bool>,
+  "answer":               "<prose with [chunk_id] citations | null>",
+  "cited_chunks":         ["<chunk_id>"],
+  "confidence":           <0.0–1.0>,
+  "insufficient_data_for": ["<claim not supportable from context>"]
+}
+```
+
+---
+
+### 11.4 — Prompt 4: Hybrid Merger (output: MIXED — JSON wrapper)
+
+**File:** `src/prompts/versions/hybrid_orchestrator_v1.yaml`
+**Parameters:** temperature=0.0, top_p=1.0, max_tokens=1000, seed=42
+
+```
+SYSTEM:
+You are a hybrid answer synthesizer for an enterprise ERP assistant.
+You receive two independent results: structured SQL data and RAG document context.
+Merge them into one coherent, accurate response.
+
+RULES:
+1. SQL data is authoritative for numbers, records, and current operational state
+2. RAG context is authoritative for policies, procedures, and regulations
+3. If SQL and RAG CONTRADICT → flag both; present both; do NOT pick one without evidence
+4. Never add information not present in either source
+5. Label confidence per claim: HIGH (both agree) | MEDIUM (one source) | LOW (inferred)
+6. Maximum answer: 500 words
+
+SQL RESULT: {{sql_result_json}}
+RAG RESULT: {{rag_result_json}}
+USER QUERY: {{masked_query}}
+
+OUTPUT FORMAT (JSON):
+{
+  "merged_answer":      "<synthesized prose, max 500 words>",
+  "sql_contribution":   "<what the SQL data added to the answer>",
+  "rag_contribution":   "<what the document context added>",
+  "contradictions":     ["<contradiction description>"],
+  "overall_confidence": <0.0–1.0>,
+  "cited_chunks":       ["<chunk_id>"],
+  "sql_tables_used":    ["<table>"]
+}
+```
+
+---
+
+### 11.5 — Prompt 5: LLM-as-Judge Evaluator (output: STRICT JSON)
+
+**File:** `src/prompts/versions/evaluator_v1.yaml`
+**Parameters:** temperature=0.0, top_p=1.0, max_tokens=512, seed=42
+
+```
+SYSTEM:
+You are a strict evaluator for an enterprise ERP RAG system.
+Score each dimension 0.0–1.0 using the rubrics. Output JSON only. No prose.
+
+RUBRICS:
+- grounding_score:   fraction of answer claims traceable to context chunks
+- hallucination_score: fraction of answer claims NOT in context (inverse of grounding)
+- completeness:      fraction of reference answer points covered by system answer
+- faithfulness:      answer is factually consistent with context (1.0 = fully faithful)
+- relevance:         answer addresses the actual query (1.0 = fully on-topic)
+
+QUERY:            {{query}}
+REFERENCE ANSWER: {{reference_answer}}
+SYSTEM ANSWER:    {{system_answer}}
+CONTEXT CHUNKS:   {{chunks_json}}
+
+OUTPUT FORMAT (JSON only):
+{
+  "grounding_score":       <0.0–1.0>,
+  "hallucination_score":   <0.0–1.0>,
+  "completeness":          <0.0–1.0>,
+  "faithfulness":          <0.0–1.0>,
+  "relevance":             <0.0–1.0>,
+  "hallucinated_claims":   ["<claim text>"],
+  "missing_from_answer":   ["<reference point not covered>"],
+  "evaluator_confidence":  <0.0–1.0>
+}
+```
+
+---
+
+## 12. Prompt Versioning System
+
+### 12.1 — PromptVersion Data Model
+
+```python
+# src/prompts/registry.py
+
+DeploymentStatus = Literal["shadow", "canary", "production", "deprecated"]
+
+@dataclass
+class PromptParameters:
+    model: str           # "gpt-4o" | "vllm"
+    temperature: float   # 0.0 for all production prompts
+    top_p: float
+    max_tokens: int
+    seed: int = 42       # determinism
+
+@dataclass
+class PromptMetrics:
+    classification_accuracy: float | None = None
+    hallucination_rate: float | None = None
+    grounding_score: float | None = None
+    latency_p95_ms: float | None = None
+    sample_size: int = 0
+    evaluated_at: str | None = None   # ISO date
+
+@dataclass
+class PromptVersion:
+    id: str                    # "classifier_v2"
+    prompt_name: str           # "query_classifier"
+    version: str               # "v2"
+    prompt_text: str
+    parameters: PromptParameters
+    metrics: PromptMetrics = field(default_factory=PromptMetrics)
+    deployment_status: DeploymentStatus = "shadow"
+    schema_path: str | None = None
+    created_at: str = ""
+    changelog: str = ""
+```
+
+### 12.2 — YAML File Format
+
+```yaml
+# src/prompts/versions/classifier_v1.yaml
+id: classifier_v1
+prompt_name: query_classifier
+version: v1
+deployment_status: production
+changelog: "Initial production classifier"
+created_at: "2026-04-23"
+schema_path: schemas/classifier_output.schema.json
+parameters:
+  model: gpt-4o
+  temperature: 0.0
+  top_p: 1.0
+  max_tokens: 256
+  seed: 42
+metrics:
+  classification_accuracy: null   # populated after evaluation run
+  hallucination_rate: null
+  latency_p95_ms: null
+  sample_size: 0
+prompt_text: |
+  SYSTEM:
+  You are a strict query router...
+```
+
+### 12.3 — A/B Testing Protocol
+
+**Traffic split:**
+
+| Status | Live traffic share | Behavior |
+|--------|-------------------|----------|
+| `shadow` | 0% | LLM called; response discarded; metrics logged |
+| `canary` | 10% | Real response served; metrics collected |
+| `production` | 90% | Current stable; all other traffic |
+| `deprecated` | 0% | Kept 30 days for rollback reference |
+
+**Promotion ladder:**
+1. New version starts as `shadow` for minimum 24h
+2. Run benchmark on ≥ 200 golden-set queries
+3. If `new_metrics > current_metrics` on ALL DoD gates → promote to `canary`
+4. Canary runs 48h; if p95 latency + accuracy hold → promote to `production`
+5. Previous `production` → `deprecated`
+
+**Traffic routing in code:**
+```python
+# In QueryClassifierAgent.run():
+# hash(user_id) % 100 < 10 → canary version, else → production version
+version = registry.resolve("classifier",
+    version="canary" if hash(user_id) % 100 < 10 else "production")
+```
+
+**A/B record logged per request:**
+```json
+{
+  "query_id": "<uuid>",
+  "prompt_version": "classifier_v2",
+  "intent_returned": "SQL",
+  "confidence": 0.91,
+  "latency_ms": 312,
+  "ground_truth": "SQL"
+}
+```
+
+---
+
+## 13. Experimentation Strategy
+
+### 13.1 — Experiment 1: Retrieval Strategy (RAG vs HyDE vs Hybrid)
+
+**Hypothesis:** HyDE improves recall@10 by ≥ 0.05 for policy/SOP queries because
+the embedding space for questions and documents is misaligned.
+
+| Variant | Strategy |
+|---------|---------|
+| A | Standard RAG — embed query → vector search |
+| B | HyDE — LLM generates hypothetical doc → embed that → vector search |
+| C | Hybrid retrieval — BM25 sparse + dense (RRF fusion) |
+
+**Metric:** recall@10, precision@5, rerank_gain
+**Dataset:** 500 golden queries from SOPs + tax_circulars (labeled with relevant chunk IDs)
+**Duration:** 72h shadow traffic across all variants
+
+**Success criteria:**
+- Winner must exceed baseline (A) by recall@10 ≥ +0.05
+- AND p95 latency must not increase by > 500ms
+- Statistical significance: p < 0.05 (chi-squared on rank agreement)
+
+---
+
+### 13.2 — Experiment 2: Chunking Strategies
+
+**Hypothesis:** Domain-aware chunkers (SOP/BPMN/TaxCircular) outperform
+recursive character splitting by recall@10 ≥ +0.08 on their respective domains.
+
+| Variant | Strategy |
+|---------|---------|
+| A | RecursiveCharacterTextSplitter (chunk_size=512, overlap=50) |
+| B | SOP chunker (by section) |
+| C | TaxCircular chunker (by article) |
+| D | Semantic chunker (split on embedding similarity drop) |
+
+**Metric:** recall@10, context_utilization, hybrid_consistency_score
+**Dataset:** 200 queries per domain (finance / inventory / hr)
+
+**Success criteria:**
+- Domain chunker beats RCS by recall@10 ≥ +0.08 on its domain
+- context_utilization ≥ 0.70 (chunks are actually referenced in answers)
+
+---
+
+### 13.3 — Experiment 3: Reranker Models
+
+**Hypothesis:** A cross-encoder reranker improves precision@5 enough to justify
+the added latency cost.
+
+| Variant | Model |
+|---------|-------|
+| A | No reranker — top-5 by vector similarity |
+| B | Cohere Rerank API |
+| C | cross-encoder/ms-marco-MiniLM-L-6-v2 (local) |
+| D | BGE-Reranker-Large (local) |
+
+**Metric:** rerank_gain (precision@5 after − before), reranker_latency_ms p95
+
+**Success criteria:**
+- rerank_gain ≥ +0.10
+- reranker_latency_ms p95 ≤ 200ms
+- If only local models meet latency: deploy local; Cohere is fallback
+
+---
+
+### 13.4 — Experiment 4: Prompt Temperature
+
+**Hypothesis:** temperature=0.0 minimizes hallucination_rate without
+harming answer completeness.
+
+| Variant | temperature | top_p |
+|---------|------------|-------|
+| A | 0.0 | 1.0 |
+| B | 0.1 | 0.95 |
+| C | 0.3 | 0.90 |
+
+**Metric:** hallucination_rate, completeness (from Prompt 5 evaluator)
+**Dataset:** 300 queries scored by LLM-as-judge
+
+**Success criteria:**
+- Chosen config: hallucination_rate < 2% AND completeness ≥ 0.80
+- Tie-break: lower temperature wins (determinism preferred)
+
+---
+
+## 14. Security Validation Layer — Pre-LLM Gate
+
+### 14.1 — Two-Phase SecurityGate
+
+The `SecurityGate` in `src/application/services/security_gate.py` runs BEFORE
+any LLM call. Both phases must pass or the request is rejected immediately.
+
+```
+Phase 1 — RBAC check (no LLM):
+  If declared_module set → check MODULE_ACCESS_MATRIX[role][module] exists
+  If intent == SQL → role must have can_sql=True for the module
+  REPORTING_ANALYST + SQL intent → RBACViolationError always
+  → HTTP 403 returned; no LLM called; audit log written
+
+Phase 2 — PII masking (no LLM):
+  Scan raw_query for DZ-specific PII patterns (email, phone_dz, nid_dz, tax_id_dz)
+  Replace all hits with [REDACTED:<type>] tokens
+  Masked query returned; original stored in audit log only
+  → maskedQuery passed to classifier and all subsequent agents
+```
+
+### 14.2 — Defense-in-Depth (5 independent layers)
+
+| Layer | Location | What it blocks |
+|-------|----------|----------------|
+| 1 | HTTP RBACMiddleware (existing) | /api/erp/query access by role + module state |
+| 2 | SecurityGate Phase 1 (pre-LLM) | Module access by intent + declared_module |
+| 3 | SecurityGate Phase 2 (pre-LLM) | PII in query text before any LLM sees it |
+| 4 | SQLValidator Stage 2 (post-generation) | LLM-generated SQL accessing forbidden tables |
+| 5 | SQLExecutor Stage 3 (pre-execution) | Executes only if is_valid=True AND has_tenant_filter=True |
+
+**LLM bypass is impossible:** Even if the LLM generates SQL for a forbidden table,
+SQLValidator checks `is_table_allowed(role, table)` before Stage 3 runs.
+The executor never receives an unsafe query.
+
+### 14.3 — Enforcement Examples
+
+```
+inventory_manager queries finance:
+  SecurityGate Phase 1:
+    MODULE_ACCESS_MATRIX[INVENTORY_MANAGER][FINANCE] → no entry
+    → RBACViolationError("INVENTORY_MANAGER cannot access finance")
+    → HTTP 403 before classifier is called
+
+REPORTING_ANALYST attempts SQL:
+  SecurityGate Phase 1:
+    intent=SQL AND role=REPORTING_ANALYST
+    → RBACViolationError("REPORTING_ANALYST is RAG-only")
+    → HTTP 403 before classifier is called
+
+LLM generates SQL with forbidden table (bypass attempt):
+  LLM generates: SELECT * FROM invoices WHERE tenant_id = 'x'
+  SQLValidator: is_table_allowed(INVENTORY_MANAGER, "invoices")
+    → "invoices" maps to ErpModule.FINANCE
+    → INVENTORY_MANAGER has no finance SQL access
+    → ValidationReport(is_valid=False, reason="RBAC: table 'invoices' is finance")
+  SQLExecutor: never called (is_valid=False)
+  Response: HTTP 403 with audit log entry
+```
+
+---
+
+## 15. Decision Framework — Routing Logic
+
+### 15.1 — Confidence Thresholds
+
+```python
+CONFIDENCE_THRESHOLDS = {
+    "high":   0.85,   # direct route to classified intent
+    "medium": 0.70,   # route to HYBRID as safe fallback
+    "low":    0.50,   # BLOCK — too uncertain to serve
+}
+```
+
+### 15.2 — Routing Decision Tree
+
+```
+RoutingDecision received from QueryClassifierAgent
+        │
+        ├── intent == BLOCKED → HTTP 403 immediately (no further processing)
+        │
+        ├── confidence < 0.50 → BLOCKED (conservative: uncertain = unsafe)
+        │
+        ├── 0.50 ≤ confidence < 0.70 → HYBRID (safe fallback for medium uncertainty)
+        │
+        ├── confidence ≥ 0.70:
+        │     intent == SQL AND role == REPORTING_ANALYST → RAG (role override)
+        │     intent == SQL AND module.can_sql == False   → RAG (module override)
+        │     otherwise                                    → classified intent
+        │
+        └── HYBRID path always: asyncio.gather(RAG, SQL) simultaneously
+```
+
+### 15.3 — Fallback Cascade
+
+| Primary Failure | Fallback Action |
+|----------------|----------------|
+| SQL Stage 1 fails (LLM error) | Return structured error; no RAG fallback; log |
+| SQL Stage 2 fails (unsafe query) | HTTP 403 + audit log; never fall through to RAG |
+| SQL Stage 3 fails (DB timeout) | Retry once (max 3s); then HTTP 503 |
+| RAG vector search returns 0 docs | Return "Insufficient information in knowledge base" |
+| RAG grounding_score < 0.50 | Append disclaimer: "Low-confidence answer" |
+| HYBRID — SQL fails, RAG succeeds | Return RAG-only result; flag `sql_unavailable=true` |
+| HYBRID — RAG fails, SQL succeeds | Return SQL-only result; flag `rag_unavailable=true` |
+| HYBRID — both fail | HTTP 503 with structured error JSON |
+| LLM rate limit / timeout | 1 retry with exponential backoff (1s, 3s); then HTTP 429 |
+| Classifier confidence < 0.50 | BLOCKED (conservative) |
+| All LLMs down (circuit open) | HTTP 503 `{degraded: true, cached_answer: ...}` |
+
+### 15.4 — Intent Selection Heuristic (for test case authoring)
+
+**Use SQL when:**
+- Query contains: "how many", "total", "sum", "average", "list all", "count", "latest"
+- Query references specific entity IDs, date ranges, or numeric thresholds
+- Answer requires real-time operational data from ERP tables
+- classifier confidence ≥ 0.85 for SQL AND role has can_sql=True
+
+**Use RAG when:**
+- Query contains: "how to", "what is the policy", "procedure for", "regulation", "circular"
+- Query references SOPs, tax rules, BPMN workflows, compliance documents
+- REPORTING_ANALYST role — always RAG regardless of classification
+- classifier confidence ≥ 0.85 for RAG
+
+**Use HYBRID when:**
+- Query requires BOTH current data AND procedural/policy context
+  (e.g. "What VAT rate applies to our Q1 invoices?" — rate from RAG, invoices from SQL)
+- classifier confidence is medium (0.70–0.85) — safe default
+- REPORTING_ANALYST + SQL intent (role override → HYBRID treated as RAG)
+
+**Block when:**
+- Classifier returns BLOCKED intent
+- SQL injection patterns detected in raw query (pre-LLM regex gate)
+- RBAC check fails (SecurityGate Phase 1)
+- classifier confidence < 0.50
+
+---
+
+## 16. Sprint 7–10 Implementation Checklist
+
+Derived from the architecture session. Each item maps to a file in Sections 9.1–9.8.
+
+### Sprint 7 — Hybrid Agent (current sprint)
+
+| Priority | File to create | What it delivers |
+|----------|---------------|-----------------|
+| P0 | `src/domain/models/routing_decision.py` | RoutingDecision dataclass |
+| P0 | `src/domain/models/rag_result.py` | RAGResult dataclass |
+| P0 | `src/domain/models/sql_result.py` | SQLResult dataclass |
+| P0 | `src/domain/models/hybrid_result.py` | HybridResult dataclass |
+| P0 | `src/agents/base_agent.py` | BaseAgent ABC |
+| P0 | `src/agents/hybrid_agent.py` | asyncio.gather + partial failure handling |
+| P0 | `src/application/use_cases/run_hybrid.py` | RunHybridUseCase |
+| P0 | `src/application/use_cases/route_query.py` | RouteQueryUseCase + routing logic |
+| P0 | `src/application/services/security_gate.py` | Pre-LLM RBAC + PII gate |
+| P1 | `src/infrastructure/rag/vector_retriever.py` | Milvus/MongoDB search adapter |
+| P1 | `src/infrastructure/rag/reranker.py` | Cross-encoder adapter |
+| P1 | `src/infrastructure/rag/context_builder.py` | Context window assembler |
+| P1 | `src/prompts/registry.py` | PromptRegistry + YAML loader + schema validator |
+| P1 | `src/prompts/versions/hybrid_orchestrator_v1.yaml` | Hybrid merger prompt |
+| P1 | `src/prompts/versions/rag_answer_v1.yaml` | RAG answer prompt |
+| P2 | `src/routes/query.py` | POST /api/v1/query unified entry |
+
+### Sprint 8 — Model Selection + Prompt Versioning
+
+| Priority | File to create | What it delivers |
+|----------|---------------|-----------------|
+| P0 | `src/prompts/versions/classifier_v1.yaml` | Classifier prompt YAML |
+| P0 | `src/prompts/versions/sql_generator_v1.yaml` | SQL generator prompt YAML |
+| P0 | `src/prompts/versions/evaluator_v1.yaml` | LLM-as-judge prompt YAML |
+| P0 | `src/prompts/schemas/*.schema.json` | All 3 JSON schemas |
+| P0 | `src/agents/query_classifier_agent.py` | QueryClassifierAgent |
+| P0 | `src/observability/metrics_collector.py` | MetricsCollector + flush() |
+| P1 | `src/observability/trace_collector.py` | OpenTelemetry spans per stage |
+| P1 | `src/application/services/metrics_recorder.py` | Per-request metrics recording |
+| P1 | `src/routes/eval.py` | POST /api/v1/eval/run |
+
+### Sprint 9 — Query Intelligence + Evaluation
+
+| Priority | File to create | What it delivers |
+|----------|---------------|-----------------|
+| P0 | `src/evaluation/metrics/generation_metrics.py` | grounding/hallucination scores |
+| P0 | `src/evaluation/metrics/retrieval_metrics.py` | recall@k, precision@k, rerank_gain |
+| P0 | `src/evaluation/metrics/classification_metrics.py` | accuracy, F1, confusion matrix |
+| P0 | `src/evaluation/metrics/security_metrics.py` | RBAC detection, PII leak rate |
+| P0 | `src/evaluation/benchmarks/classifier_benchmark.py` | 50-query CI gate (≥ 95%) |
+| P0 | `src/evaluation/benchmarks/rag_benchmark.py` | Golden set + recall@10 gate |
+| P1 | `src/evaluation/benchmarks/hybrid_benchmark.py` | Consistency scorer |
+| P1 | `src/evaluation/experiments/experiment_runner.py` | Variant routing + metrics |
+| P1 | `src/evaluation/experiments/ab_test.py` | Statistical significance test |
+| P1 | `src/infrastructure/rag/hyde_generator.py` | HyDE for Experiment 1 |
+
+### Sprint 10 — Hardening
+
+| Priority | What to do |
+|----------|-----------|
+| P0 | Run all 4 experiments (Section 13); promote winning variants to production |
+| P0 | SQL injection test suite: 100 queries, 0 bypass |
+| P0 | Cross-tenant isolation test: 0 leakage |
+| P0 | Load test: 50 concurrent users, p95 < 3s |
+| P0 | Validate ALL DoD thresholds from Section 10.5 in CI |
+| P1 | Update ARCHITECTURE.md to reflect final running system |
+| P1 | Create v1.0.0 tag on main |

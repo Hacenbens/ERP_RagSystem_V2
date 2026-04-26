@@ -5,6 +5,36 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [sprint-7-done] — 2026-04-26
+
+### Added
+- feat(domain): Chunk.chunk_id stable field; AssetStoragePort, ChunkStorePort, JobDispatcherPort ABCs
+- feat(storage): LocalAssetStorage implementing AssetStoragePort
+- feat(persistence): InMemoryChunkStore and MongoChunkStore implementing ChunkStorePort
+- feat(workers): CeleryJobDispatcher implementing JobDispatcherPort
+- feat(hybrid-agent): LLMPort, BaseAgent, RAGAgent, SQLAgent, HybridAgent with asyncio.gather and partial failure handling
+- feat(hybrid-agent): VectorRetriever, IdentityReranker, ContextBuilder, PromptRegistry, StubClassifier
+- feat(hybrid-agent): RunRAGUseCase, RunSQLUseCase, RunHybridUseCase, RouteQueryUseCase
+- feat(hybrid-agent): POST /api/v1/query route wired through DI container
+- feat(hybrid-agent): POST /api/assets/upload route with storage and job dispatch
+- feat(observability): HYBRID_PARTIAL_RATE counter for partial RAG+SQL failures
+- feat(rag): NgrokEmbeddingProvider with batch texts API; InMemoryVectorStore upsert + cosine search
+
+### Refactored
+- refactor(ingest): IngestAssetUseCase wired with AssetStoragePort and ChunkStorePort; chunker signature → (bytes, str) → list[Chunk]
+- refactor(embed): EmbedAssetUseCase wired with ChunkStorePort and EmbeddingPort; removed chunker/embedder constructor args
+
+### Tested
+- test(hybrid-agent): 18 unit tests — VectorStorePort extensions, VectorRetriever
+- test(hybrid-agent): unit tests — HybridAgent, RAGAgent, SQLAgent partial failure, asyncio.gather
+- test(hybrid-agent): 20-query end-to-end integration test for hybrid pipeline via POST /api/v1/query
+- test(performance): hybrid p95 latency test — 10 queries, p95 ≤ 8000 ms, observed ~13 ms
+- test(workers): updated 28 + 32 + 74 integration tests for refactored IngestAssetUseCase and EmbedAssetUseCase signatures
+- fix(tests): added build_query_chain to middleware, module-guard, and middleware-order test app factories
+- Total Sprint 7 tests: 1192 passing suite-wide, 0 failures
+
+---
+
 ## [sprint-6-done] — 2026-04-22
 
 ### Added
