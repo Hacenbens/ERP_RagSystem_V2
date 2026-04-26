@@ -252,7 +252,7 @@ Test file:   src/tests/unit/test_prompt_registry.py (extend)
 
 ### TASK 9 — MetricsCollector (per-request accumulator + Prometheus flush)
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE
 File:        src/observability/metrics_collector.py
 Action:      CREATE
 Effort:      0.5d
