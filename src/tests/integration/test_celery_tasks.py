@@ -1,5 +1,5 @@
 """
-Integration tests — Sprint 6 Task 1
+Integration tests — Sprint 6 Task 1 (updated Sprint 7 Task 18)
 Covers: ingest_asset Celery task (retry policy, dead-letter, idempotency, metrics)
 
 Strategy
@@ -10,6 +10,9 @@ Strategy
 - Dependencies (use case, dead-letter repo, idempotency store) are injected via
   a test-specific DI container, monkeypatched onto get_worker_container().
 - Prometheus counters are read directly from the metric objects after each test.
+- Sprint 7 refactor: IngestAssetUseCase now requires AssetStoragePort and
+  ChunkStorePort. Stub implementations are injected; chunker signature is
+  (content: bytes, strategy: str) -> list[Chunk].
 """
 from __future__ import annotations
 
@@ -23,7 +26,10 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 
 from celery.exceptions import MaxRetriesExceededError
 
+from src.domain.chunk import Chunk
 from src.domain.ingest import FailedTaskEntry
+from src.domain.ports.asset_storage_port import AssetStoragePort
+from src.domain.ports.chunk_store_port import ChunkStorePort
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.workers.dead_letter_repository import InMemoryDeadLetterRepository
 from src.infrastructure.workers.idempotency_store import InMemoryIdempotencyStore
@@ -48,18 +54,68 @@ STRATEGY = "sop"
 
 
 # ---------------------------------------------------------------------------
+# Stubs
+# ---------------------------------------------------------------------------
+
+class _StubAssetStorage(AssetStoragePort):
+    """Returns constant bytes from read_bytes — no filesystem I/O."""
+
+    _CONTENT = b"stub document content for testing"
+
+    def save_bytes(self, tenant_id: str, asset_id: str, filename: str, content: bytes) -> str:
+        return f"{tenant_id}/{asset_id}/{filename}"
+
+    def read_bytes(self, tenant_id: str, storage_key: str) -> bytes:
+        return self._CONTENT
+
+    def delete_bytes(self, tenant_id: str, storage_key: str) -> None:
+        pass
+
+
+class _StubChunkStore(ChunkStorePort):
+    """Records save_chunks calls — no database I/O."""
+
+    def __init__(self) -> None:
+        self.saved: list[tuple] = []
+
+    def save_chunks(self, asset_id: str, tenant_id: str, chunks: list[Chunk]) -> int:
+        self.saved.append((asset_id, tenant_id, chunks))
+        return len(chunks)
+
+    def find_by_asset(self, asset_id: str, tenant_id: str) -> list[Chunk]:
+        return []
+
+    def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _make_chunks(n: int) -> list[Chunk]:
+    """Return a list of n minimal Chunk objects."""
+    return [Chunk(text=f"chunk-{i}") for i in range(n)]
+
 
 def _build_test_container(
     chunker,
     dead_letter_repo: InMemoryDeadLetterRepository | None = None,
     idempotency_store: InMemoryIdempotencyStore | None = None,
+    asset_storage: AssetStoragePort | None = None,
+    chunk_store: ChunkStorePort | None = None,
 ) -> DIContainer:
     """Build a minimal DI container for task tests."""
     dl_repo = dead_letter_repo or InMemoryDeadLetterRepository()
     id_store = idempotency_store or InMemoryIdempotencyStore()
-    use_case = IngestAssetUseCase(idempotency_store=id_store, chunker=chunker)
+    _storage = asset_storage or _StubAssetStorage()
+    _chunk_store = chunk_store or _StubChunkStore()
+    use_case = IngestAssetUseCase(
+        idempotency_store=id_store,
+        asset_storage=_storage,
+        chunk_store=_chunk_store,
+        chunker=chunker,
+    )
 
     container = DIContainer()
     container.register("dead_letter_repository", dl_repo)
@@ -100,32 +156,32 @@ def celery_eager_mode():
 
 class TestIngestAssetHappyPath:
     def test_successful_ingest_returns_success_status(self):
-        container = _build_test_container(chunker=lambda a, t, s: 7)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(7))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["status"] == "success"
 
     def test_successful_ingest_returns_asset_id_and_tenant_id(self):
-        container = _build_test_container(chunker=lambda a, t, s: 7)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(7))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["asset_id"] == ASSET_ID
         assert result["tenant_id"] == TENANT_ID
 
     def test_successful_ingest_returns_correct_chunk_count(self):
-        container = _build_test_container(chunker=lambda a, t, s: 12)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(12))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert result["chunk_count"] == 12
 
     def test_successful_ingest_returns_chunk_strategy(self):
-        container = _build_test_container(chunker=lambda a, t, s: 3)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(3))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, "bpmn"]).get()
         assert result["chunk_strategy"] == "bpmn"
 
     def test_successful_ingest_includes_task_id(self):
-        container = _build_test_container(chunker=lambda a, t, s: 1)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(1))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         assert "task_id" in result
@@ -133,18 +189,17 @@ class TestIngestAssetHappyPath:
 
     def test_successful_ingest_result_is_json_serialisable(self):
         import json
-        container = _build_test_container(chunker=lambda a, t, s: 5)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(5))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             result = ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
-        # Must not raise — Celery messages must be JSON-serialisable
         json.dumps(result)
 
     def test_default_chunk_strategy_is_sop(self):
         received_strategy: list[str] = []
 
-        def recording_chunker(a: str, t: str, s: str) -> int:
-            received_strategy.append(s)
-            return 2
+        def recording_chunker(content: bytes, strategy: str) -> list[Chunk]:
+            received_strategy.append(strategy)
+            return _make_chunks(2)
 
         container = _build_test_container(chunker=recording_chunker)
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -161,7 +216,7 @@ class TestIngestAssetIdempotency:
         id_store = InMemoryIdempotencyStore()
         id_store.mark_processed(ASSET_ID, TENANT_ID)
         container = _build_test_container(
-            chunker=lambda a, t, s: 5,
+            chunker=lambda content, strategy: _make_chunks(5),
             idempotency_store=id_store,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -173,7 +228,7 @@ class TestIngestAssetIdempotency:
         id_store = InMemoryIdempotencyStore()
         id_store.mark_processed(ASSET_ID, TENANT_ID)
         container = _build_test_container(
-            chunker=lambda a, t, s: 5,
+            chunker=lambda content, strategy: _make_chunks(5),
             idempotency_store=id_store,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -186,7 +241,7 @@ class TestIngestAssetIdempotency:
         id_store = InMemoryIdempotencyStore()
         id_store.mark_processed(ASSET_ID, TENANT_ID)
         container = _build_test_container(
-            chunker=lambda a, t, s: 3,
+            chunker=lambda content, strategy: _make_chunks(3),
             idempotency_store=id_store,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -196,7 +251,7 @@ class TestIngestAssetIdempotency:
     def test_first_call_marks_asset_as_processed(self):
         id_store = InMemoryIdempotencyStore()
         container = _build_test_container(
-            chunker=lambda a, t, s: 5,
+            chunker=lambda content, strategy: _make_chunks(5),
             idempotency_store=id_store,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -213,7 +268,7 @@ class TestIngestAssetRetryPolicy:
         """Chunker called MAX_RETRIES + 1 times total (1 original + 3 retries)."""
         call_count = [0]
 
-        def counting_failing_chunker(a: str, t: str, s: str) -> int:
+        def counting_failing_chunker(content: bytes, strategy: str) -> list[Chunk]:
             call_count[0] += 1
             raise RuntimeError("permanent failure")
 
@@ -227,7 +282,7 @@ class TestIngestAssetRetryPolicy:
     def test_failing_task_writes_exactly_one_dead_letter_entry(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -239,7 +294,7 @@ class TestIngestAssetRetryPolicy:
     def test_dead_letter_entry_has_correct_asset_id(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -253,7 +308,7 @@ class TestIngestAssetRetryPolicy:
     def test_dead_letter_entry_has_correct_retry_count(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -266,7 +321,7 @@ class TestIngestAssetRetryPolicy:
     def test_dead_letter_entry_has_exception_type(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("boom")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("boom")),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -280,7 +335,7 @@ class TestIngestAssetRetryPolicy:
     def test_dead_letter_entry_has_task_name(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -293,7 +348,7 @@ class TestIngestAssetRetryPolicy:
     def test_dead_letter_entry_args_contain_asset_and_tenant(self):
         dl_repo = InMemoryDeadLetterRepository()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail")),
             dead_letter_repo=dl_repo,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -307,7 +362,7 @@ class TestIngestAssetRetryPolicy:
     def test_asset_not_marked_processed_after_full_retry_exhaustion(self):
         id_store = InMemoryIdempotencyStore()
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail")),
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail")),
             idempotency_store=id_store,
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
@@ -321,11 +376,11 @@ class TestIngestAssetRetryPolicy:
         dl_repo = InMemoryDeadLetterRepository()
         attempts = [0]
 
-        def fails_once_then_succeeds(a: str, t: str, s: str) -> int:
+        def fails_once_then_succeeds(content: bytes, strategy: str) -> list[Chunk]:
             attempts[0] += 1
             if attempts[0] == 1:
                 raise RuntimeError("transient")
-            return 5
+            return _make_chunks(5)
 
         container = _build_test_container(
             chunker=fails_once_then_succeeds,
@@ -375,7 +430,7 @@ class TestExponentialBackoffCountdown:
 class TestIngestAssetMetrics:
     def test_dispatched_counter_increments_on_success(self):
         before = _read_counter(WORKER_TASKS_DISPATCHED)
-        container = _build_test_container(chunker=lambda a, t, s: 3)
+        container = _build_test_container(chunker=lambda content, strategy: _make_chunks(3))
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             ingest_asset.apply(args=[ASSET_ID, TENANT_ID, STRATEGY]).get()
         after = _read_counter(WORKER_TASKS_DISPATCHED)
@@ -384,7 +439,7 @@ class TestIngestAssetMetrics:
     def test_failed_counter_increments_after_retry_exhaustion(self):
         before = _read_counter(WORKER_TASKS_FAILED)
         container = _build_test_container(
-            chunker=lambda a, t, s: (_ for _ in ()).throw(RuntimeError("fail"))
+            chunker=lambda content, strategy: (_ for _ in ()).throw(RuntimeError("fail"))
         )
         with patch("src.infrastructure.workers.tasks.ingest_task.get_worker_container", return_value=container):
             with pytest.raises(Exception):
