@@ -200,7 +200,7 @@ Test file:   src/tests/integration/test_degraded_mode.py
 
 ### TASK 7 — QueryClassifierAgent + classifier_v1.yaml + schema
 ```
-Status:      ☐ TODO
+Status:      ✅ DONE (10/10 live accuracy on Gemini 2.5 Flash-Lite)
 Files:       src/agents/query_classifier_agent.py
              src/prompts/versions/classifier_v1.yaml
              src/prompts/schemas/classifier_output.schema.json
