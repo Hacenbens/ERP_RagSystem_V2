@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from src.agents.hybrid_agent import HybridAgent
 from src.agents.rag_agent import RAGAgent
 from src.agents.sql_agent import SQLAgent
+from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.erp.query_executor import QueryExecutor
@@ -84,7 +85,7 @@ class _StubLLM(LLMPort):
         return _RAG_RESPONSE
 
 
-class _ConstantEmbedder:
+class _ConstantEmbedder(EmbeddingPort):
     _VECTOR: list[float] = [1.0] + [0.0] * 767
 
     def embed(self, text: str) -> list[float]:
