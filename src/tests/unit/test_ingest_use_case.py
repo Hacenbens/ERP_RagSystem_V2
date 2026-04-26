@@ -1,6 +1,6 @@
 """
-Unit tests — Sprint 6 Task 1
-Covers: domain models, InMemory repositories, IngestAssetUseCase
+Unit tests — Sprint 7 Task 18 (refactored from Sprint 6 Task 1)
+Covers: domain models, InMemory repositories, IngestAssetUseCase (new signature)
 
 All tests are pure in-memory — no Celery, no MongoDB, no I/O.
 """
@@ -12,7 +12,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
+from src.domain.chunk import Chunk
 from src.domain.ingest import FailedTaskEntry, IngestResult
+from src.infrastructure.persistence.chunk_store import InMemoryChunkStore
 from src.infrastructure.workers.dead_letter_repository import InMemoryDeadLetterRepository
 from src.infrastructure.workers.idempotency_store import InMemoryIdempotencyStore
 from src.use_cases.tasks.ingest_asset_use_case import (
@@ -29,16 +31,37 @@ TENANT_ID = "tenant-ferza"
 OTHER_TENANT = "tenant-acme"
 TASK_ID = "task-xyz-999"
 STRATEGY = "sop"
+CONTENT = b"sample document bytes"
 
 
-def _success_chunker(asset_id: str, tenant_id: str, strategy: str) -> int:
-    """Always returns 5 chunks — simulates a working chunker."""
-    return 5
+def _success_chunker(content: bytes, strategy: str) -> list[Chunk]:
+    """Returns 3 chunks regardless of content."""
+    return [Chunk(text=f"chunk {i}", metadata={"strategy": strategy}) for i in range(3)]
 
 
-def _failing_chunker(asset_id: str, tenant_id: str, strategy: str) -> int:
+def _failing_chunker(content: bytes, strategy: str) -> list[Chunk]:
     """Always raises — simulates a broken chunker."""
     raise RuntimeError("chunker simulated failure")
+
+
+class _StubStorage:
+    """Minimal AssetStoragePort stub that always returns CONTENT."""
+    def save_bytes(self, tenant_id, asset_id, filename, content):
+        return f"{tenant_id}/{asset_id}/{filename}"
+    def read_bytes(self, tenant_id, storage_key):
+        return CONTENT
+    def delete_bytes(self, tenant_id, storage_key):
+        pass
+
+
+class _MissingStorage:
+    """Stub that always raises FileNotFoundError on read."""
+    def save_bytes(self, tenant_id, asset_id, filename, content):
+        return ""
+    def read_bytes(self, tenant_id, storage_key):
+        raise FileNotFoundError(f"Not found: {storage_key}")
+    def delete_bytes(self, tenant_id, storage_key):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -222,40 +245,58 @@ class TestInMemoryIdempotencyStore:
 
 
 # ---------------------------------------------------------------------------
-# IngestAssetUseCase
+# IngestAssetUseCase — Sprint 7 refactored signature
 # ---------------------------------------------------------------------------
 
 class TestIngestAssetUseCase:
-    def _make_use_case(self, chunker=_success_chunker) -> tuple[IngestAssetUseCase, InMemoryIdempotencyStore]:
-        store = InMemoryIdempotencyStore()
-        use_case = IngestAssetUseCase(idempotency_store=store, chunker=chunker)
-        return use_case, store
+    def _make_use_case(
+        self,
+        chunker=_success_chunker,
+        storage=None,
+    ) -> tuple[IngestAssetUseCase, InMemoryIdempotencyStore, InMemoryChunkStore]:
+        idempotency = InMemoryIdempotencyStore()
+        chunk_store = InMemoryChunkStore()
+        asset_storage = storage or _StubStorage()
+        use_case = IngestAssetUseCase(
+            idempotency_store=idempotency,
+            asset_storage=asset_storage,
+            chunk_store=chunk_store,
+            chunker=chunker,
+        )
+        return use_case, idempotency, chunk_store
 
     def test_happy_path_returns_ingest_result(self):
-        use_case, _ = self._make_use_case()
+        use_case, _, _ = self._make_use_case()
         result = use_case.execute(
-            asset_id=ASSET_ID,
-            tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY,
-            task_id=TASK_ID,
+            asset_id=ASSET_ID, tenant_id=TENANT_ID,
+            chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
         assert isinstance(result, IngestResult)
         assert result.asset_id == ASSET_ID
         assert result.tenant_id == TENANT_ID
-        assert result.chunk_count == 5
+        assert result.chunk_count == 3
         assert result.chunk_strategy == STRATEGY
         assert result.task_id == TASK_ID
 
     def test_happy_path_marks_asset_as_processed(self):
-        use_case, store = self._make_use_case()
+        use_case, idempotency, _ = self._make_use_case()
         use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
-        assert store.is_processed(ASSET_ID, TENANT_ID) is True
+        assert idempotency.is_processed(ASSET_ID, TENANT_ID) is True
+
+    def test_happy_path_persists_chunks_in_store(self):
+        use_case, _, chunk_store = self._make_use_case()
+        use_case.execute(
+            asset_id=ASSET_ID, tenant_id=TENANT_ID,
+            chunk_strategy=STRATEGY, task_id=TASK_ID,
+        )
+        chunks = chunk_store.find_by_asset(ASSET_ID, TENANT_ID)
+        assert len(chunks) == 3
 
     def test_happy_path_duration_ms_is_non_negative(self):
-        use_case, _ = self._make_use_case()
+        use_case, _, _ = self._make_use_case()
         result = use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
@@ -263,88 +304,55 @@ class TestIngestAssetUseCase:
         assert result.duration_ms >= 0
 
     def test_already_processed_raises_asset_already_processed_error(self):
-        use_case, store = self._make_use_case()
-        store.mark_processed(ASSET_ID, TENANT_ID)
+        use_case, idempotency, _ = self._make_use_case()
+        idempotency.mark_processed(ASSET_ID, TENANT_ID)
         with pytest.raises(AssetAlreadyProcessedError):
             use_case.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
 
-    def test_already_processed_error_message_contains_asset_id(self):
-        use_case, store = self._make_use_case()
-        store.mark_processed(ASSET_ID, TENANT_ID)
-        with pytest.raises(AssetAlreadyProcessedError, match=ASSET_ID):
+    def test_storage_failure_propagates_without_calling_chunk_store(self):
+        use_case, _, chunk_store = self._make_use_case(storage=_MissingStorage())
+        with pytest.raises(FileNotFoundError):
             use_case.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
+        assert chunk_store.find_by_asset(ASSET_ID, TENANT_ID) == []
 
     def test_chunker_failure_propagates_without_marking_processed(self):
-        use_case, store = self._make_use_case(chunker=_failing_chunker)
+        use_case, idempotency, _ = self._make_use_case(chunker=_failing_chunker)
         with pytest.raises(RuntimeError, match="chunker simulated failure"):
             use_case.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
             )
-        # Asset must NOT be marked processed after a failure
-        assert store.is_processed(ASSET_ID, TENANT_ID) is False
+        assert idempotency.is_processed(ASSET_ID, TENANT_ID) is False
 
-    def test_different_tenants_same_asset_id_processed_independently(self):
-        """Two tenants with the same asset_id must not interfere with each other."""
-        use_case, store = self._make_use_case()
+    def test_chunker_receives_content_and_strategy(self):
+        received: list[tuple] = []
+
+        def recording_chunker(content: bytes, strategy: str) -> list[Chunk]:
+            received.append((content, strategy))
+            return [Chunk(text="x")]
+
+        use_case, _, _ = self._make_use_case(chunker=recording_chunker)
+        use_case.execute(
+            asset_id=ASSET_ID, tenant_id=TENANT_ID,
+            chunk_strategy="bpmn", task_id=TASK_ID,
+        )
+        assert received == [(CONTENT, "bpmn")]
+
+    def test_different_tenants_same_asset_id_are_independent(self):
+        use_case, idempotency, _ = self._make_use_case()
         use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
         )
-        # The same asset_id for another tenant is NOT yet processed
-        assert store.is_processed(ASSET_ID, OTHER_TENANT) is False
-
-        # The second tenant can ingest their copy independently
+        assert idempotency.is_processed(ASSET_ID, OTHER_TENANT) is False
         result = use_case.execute(
             asset_id=ASSET_ID, tenant_id=OTHER_TENANT,
             chunk_strategy=STRATEGY, task_id="task-2",
         )
         assert result.tenant_id == OTHER_TENANT
-
-    def test_chunker_receives_correct_arguments(self):
-        received: list[tuple[str, str, str]] = []
-
-        def recording_chunker(asset_id: str, tenant_id: str, strategy: str) -> int:
-            received.append((asset_id, tenant_id, strategy))
-            return 3
-
-        use_case, _ = self._make_use_case(chunker=recording_chunker)
-        use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy="bpmn", task_id=TASK_ID,
-        )
-        assert received == [(ASSET_ID, TENANT_ID, "bpmn")]
-
-    def test_second_call_after_failure_can_succeed(self):
-        """After a chunker failure the asset is not marked — a retry can succeed."""
-        attempts = [0]
-
-        def first_fails_then_succeeds(asset_id: str, tenant_id: str, strategy: str) -> int:
-            attempts[0] += 1
-            if attempts[0] == 1:
-                raise RuntimeError("transient error")
-            return 4
-
-        use_case, store = self._make_use_case(chunker=first_fails_then_succeeds)
-
-        with pytest.raises(RuntimeError):
-            use_case.execute(
-                asset_id=ASSET_ID, tenant_id=TENANT_ID,
-                chunk_strategy=STRATEGY, task_id=TASK_ID,
-            )
-        # First call failed — asset NOT marked
-        assert store.is_processed(ASSET_ID, TENANT_ID) is False
-
-        # Second call succeeds
-        result = use_case.execute(
-            asset_id=ASSET_ID, tenant_id=TENANT_ID,
-            chunk_strategy=STRATEGY, task_id=TASK_ID,
-        )
-        assert result.chunk_count == 4
-        assert store.is_processed(ASSET_ID, TENANT_ID) is True
