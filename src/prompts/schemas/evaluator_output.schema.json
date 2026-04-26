@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["grounding_score", "hallucination_rate", "faithfulness", "completeness", "relevance", "reasoning"],
+  "additionalProperties": false,
+  "properties": {
+    "grounding_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "hallucination_rate": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "faithfulness": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "completeness": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "relevance": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
