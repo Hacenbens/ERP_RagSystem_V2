@@ -34,6 +34,7 @@ from src.infrastructure.auth.user_repository import InMemoryUserRepository
 from src.infrastructure.di.container import DIContainer
 from src.middleware.AuthMiddleware import AuthMiddleware
 from src.middleware.RBACMiddleware import RBACMiddleware
+from src.infrastructure.di.factory import build_query_chain
 from src.tests.fixtures.jwt_fixtures import make_jwt_handler, make_valid_token
 from src.use_cases.auth_user import AuthUseCase
 
@@ -81,6 +82,7 @@ def _build_app(
     container.register("jwt_handler", jwt_handler)
     container.register("user_repository", user_repo)
     container.register("auth_use_case", auth_use_case)
+    build_query_chain(container)
     container.validate()
 
     app = FastAPI()
