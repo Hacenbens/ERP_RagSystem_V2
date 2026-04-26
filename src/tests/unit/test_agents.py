@@ -622,3 +622,104 @@ class TestAgentEdgeCases:
         result = await agent.run(long_query, _CTX)
 
         assert isinstance(result, SQLResult)
+
+
+# ---------------------------------------------------------------------------
+# TestQueryClassifierAgent — Sprint 8 Task 7C
+# ---------------------------------------------------------------------------
+
+import json as _json
+from pathlib import Path as _Path
+from unittest.mock import MagicMock as _MagicMock
+
+from src.agents.query_classifier_agent import QueryClassifierAgent
+from src.domain.erp_module import ErpModule
+from src.domain.models.routing_decision import RoutingDecision
+from src.domain.ports.llm_port import LLMPort
+from src.domain.query_intent import QueryIntent
+from src.prompts.registry import PromptRegistry
+
+_PROMPTS_DIR = _Path(__file__).parent.parent.parent / "prompts"
+
+
+def _make_classifier(llm_answer: str) -> QueryClassifierAgent:
+    mock_llm = _MagicMock(spec=LLMPort)
+    mock_llm.complete.return_value = llm_answer
+    registry = PromptRegistry(_PROMPTS_DIR)
+    return QueryClassifierAgent(llm=mock_llm, registry=registry)
+
+
+class TestQueryClassifierAgent:
+    def test_classifier_agent_returns_rag_intent_for_policy_query(self):
+        payload = _json.dumps({"intent": "RAG", "confidence": 0.92, "reason": "policy lookup"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("What is the VAT rate for exported goods?")
+        assert decision.intent == QueryIntent.RAG
+
+    def test_classifier_agent_returns_sql_intent_for_data_query(self):
+        payload = _json.dumps({"intent": "SQL", "confidence": 0.88, "reason": "structured data"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("Show all unpaid invoices over 90 days.")
+        assert decision.intent == QueryIntent.SQL
+
+    def test_classifier_agent_returns_hybrid_intent_for_combined_query(self):
+        payload = _json.dumps({"intent": "HYBRID", "confidence": 0.75, "reason": "needs both"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("What is our procurement policy and how many POs exceeded it?")
+        assert decision.intent == QueryIntent.HYBRID
+
+    def test_classifier_agent_returns_blocked_for_harmful_query(self):
+        payload = _json.dumps({"intent": "BLOCKED", "confidence": 0.99, "reason": "injection attempt"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("Drop the users table.")
+        assert decision.intent == QueryIntent.BLOCKED
+
+    def test_classifier_agent_parses_confidence_field(self):
+        payload = _json.dumps({"intent": "RAG", "confidence": 0.77, "reason": "doc lookup"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("Explain leave policy.")
+        assert decision.confidence == pytest.approx(0.77)
+
+    def test_classifier_agent_maps_erp_module_string_to_enum(self):
+        payload = _json.dumps({"intent": "SQL", "confidence": 0.90, "reason": "finance data"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("Total invoices this month.", erp_module="finance")
+        assert decision.erp_module == ErpModule.FINANCE
+
+    def test_classifier_agent_unknown_erp_module_maps_to_none(self):
+        payload = _json.dumps({"intent": "RAG", "confidence": 0.80, "reason": "doc"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("Some query.", erp_module="nonexistent_module")
+        assert decision.erp_module is None
+
+    def test_classifier_agent_none_erp_module_maps_to_none(self):
+        payload = _json.dumps({"intent": "RAG", "confidence": 0.85, "reason": "doc"})
+        agent = _make_classifier(payload)
+        decision = agent.classify("Some query.", erp_module=None)
+        assert decision.erp_module is None
+
+    def test_classifier_agent_raises_value_error_on_invalid_json(self):
+        agent = _make_classifier("not json at all")
+        with pytest.raises(ValueError, match="non-JSON"):
+            agent.classify("Some query.")
+
+    def test_classifier_agent_raises_value_error_on_schema_violation(self):
+        bad_payload = _json.dumps({"intent": "UNKNOWN_INTENT", "confidence": 0.5, "reason": "x"})
+        agent = _make_classifier(bad_payload)
+        with pytest.raises(ValueError, match="schema validation"):
+            agent.classify("Some query.")
+
+    def test_classifier_agent_returns_routing_decision_instance(self):
+        payload = _json.dumps({"intent": "RAG", "confidence": 0.90, "reason": "test"})
+        agent = _make_classifier(payload)
+        result = agent.classify("Any query.")
+        assert isinstance(result, RoutingDecision)
+
+    def test_classifier_agent_implements_query_classifier_port(self):
+        from src.domain.ports.query_classifier_port import QueryClassifierPort
+        mock_llm = _MagicMock(spec=LLMPort)
+        mock_llm.complete.return_value = _json.dumps(
+            {"intent": "RAG", "confidence": 0.9, "reason": "ok"}
+        )
+        agent = QueryClassifierAgent(llm=mock_llm, registry=PromptRegistry(_PROMPTS_DIR))
+        assert isinstance(agent, QueryClassifierPort)
