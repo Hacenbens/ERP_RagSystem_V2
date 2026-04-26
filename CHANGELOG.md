@@ -5,6 +5,35 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [sprint-8-done] — 2026-04-26
+
+### Added
+- feat(generation): ModelSelectorPort + DegradedModePort ABCs and LLMUnavailableError domain exception
+- feat(generation): GeminiLLMClient (gemini-2.5-flash-lite free tier) + vLLMLLMClient (httpx, OpenAI-compatible)
+- feat(generation): CircuitBreaker (per-provider failure state machine, HALF-OPEN after 60s)
+- feat(generation): ModelSelector with ordered fallback (Gemini → vLLM) and circuit-breaker integration
+- feat(generation): DegradedModeService with per-query-hash answer cache and degraded JSON sentinel
+- feat(agents): QueryClassifierAgent — LLM-backed classify() with classifier_v1 prompt (10/10 live accuracy)
+- feat(prompts): classifier_v1.yaml (4-intent ERP classifier with few-shots) + classifier_output.schema.json
+- feat(prompts): sql_generator_v1.yaml (mandatory tenant_id filter) + sql_generator_output.schema.json
+- feat(prompts): evaluator_v1.yaml (LLM-as-judge, 5-axis scoring) + evaluator_output.schema.json
+- feat(observability): MetricsCollector per-request accumulator with idempotent flush() to Prometheus
+- feat(observability): QUERY_STAGE_LATENCY_MS histogram + TOKENS_USED counter
+- feat(notebooks): kaggle_llm_server.ipynb — vLLM + embedding server startup guide for Kaggle GPU
+
+### Tested
+- test(generation): 45 tests for ModelSelectorPort, DegradedModePort, domain exceptions
+- test(generation): 50 tests for GeminiLLMClient and vLLMLLMClient
+- test(generation): 27 tests for ModelSelector fallback and CircuitBreaker (timing via mocked monotonic)
+- test(generation): 27 integration tests for DegradedModeService (cache hit/miss, Prometheus, logging)
+- test(agents): 12 tests for QueryClassifierAgent (all 4 intents, error paths, module mapping)
+- test(prompts): 17 tests for sql_generator and evaluator prompts (schema validation)
+- test(observability): 23 tests for MetricsCollector (idempotency, all stages, tokens, degraded)
+- test(notebooks): 15 tests for notebook structure and code cell syntax validation
+- Full suite: 1407 passed, 0 failures (target was ≥ 1192)
+
+---
+
 ## [sprint-7-done] — 2026-04-26
 
 ### Added
