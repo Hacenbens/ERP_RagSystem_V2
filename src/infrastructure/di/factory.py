@@ -1,5 +1,5 @@
 """
-DI Factory — Sprint 3 / Sprint 6
+DI Factory — Sprint 3 / Sprint 6 / Sprint 9
 Wires all concrete implementations into the DIContainer.
 
 Call `build_container()` once at app startup (e.g. in main.py lifespan).
@@ -35,12 +35,17 @@ from src.infrastructure.workers.idempotency_store import (
     MongoIdempotencyStore,
 )
 from src.agents.hybrid_agent import HybridAgent
+from src.agents.query_classifier_agent import QueryClassifierAgent
 from src.agents.rag_agent import RAGAgent
 from src.agents.sql_agent import SQLAgent
 from src.infrastructure.erp.query_executor import QueryExecutor
 from src.infrastructure.erp.query_generator import QueryGenerator
 from src.infrastructure.erp.query_validator import QueryValidator
+from src.infrastructure.generation.gemini_llm_client import GeminiLLMClient
+from src.infrastructure.generation.model_selector import ModelSelector
+from src.infrastructure.generation.vllm_llm_client import vLLMLLMClient
 from src.infrastructure.nlp.stub_classifier import StubClassifier
+from src.observability.structured_logger import get_logger
 from src.prompts.registry import PromptRegistry
 from src.use_cases.auth_user import AuthUseCase
 from src.use_cases.run_hybrid import RunHybridUseCase
@@ -50,18 +55,50 @@ from src.use_cases.route_query import RouteQueryUseCase
 from src.use_cases.tasks.embed_asset_use_case import EmbedAssetUseCase
 from src.use_cases.tasks.ingest_asset_use_case import IngestAssetUseCase
 
+logger = get_logger(__name__)
+
 
 class _NullLLM(LLMPort):
-    """No-op LLM placeholder — returns empty string until a real LLM is wired."""
+    """No-op LLM placeholder — active only when no LLM provider is configured."""
 
     def complete(self, prompt: str, temperature: float = 0.0, max_tokens: int = 512) -> str:
+        logger.warning("null_llm.complete.called — no LLM provider configured")
         return ""
+
+
+def _build_model_selector() -> ModelSelector | _NullLLM:
+    """Build a ModelSelector from available env-configured providers.
+
+    Provider priority: Gemini (primary) → vLLM (fallback).
+    Falls back to _NullLLM with a warning when no keys are present.
+    Each call returns a fresh instance with its own circuit-breaker state.
+    """
+    providers: list[tuple[LLMPort, str]] = []
+
+    if os.environ.get("GEMINI_API_KEY"):
+        providers.append((GeminiLLMClient.from_env(), "gemini"))
+        logger.info("factory.llm.gemini_enabled")
+
+    if os.environ.get("VLLM_BASE_URL") and os.environ.get("VLLM_MODEL"):
+        providers.append((vLLMLLMClient.from_env(), "vllm"))
+        logger.info("factory.llm.vllm_enabled")
+
+    if providers:
+        return ModelSelector(providers=providers)
+
+    logger.warning(
+        "factory.llm.no_provider — set GEMINI_API_KEY or VLLM_BASE_URL+VLLM_MODEL "
+        "to enable real LLM responses"
+    )
+    return _NullLLM()
 
 
 def _select_embedder() -> EmbeddingPort:
     """Return NgrokEmbeddingProvider when NGROK_BASE_URL is set, else NoopEmbeddingProvider."""
     if os.environ.get("NGROK_BASE_URL"):
+        logger.info("factory.embedder.ngrok_enabled", base_url=os.environ["NGROK_BASE_URL"])
         return NgrokEmbeddingProvider()
+    logger.warning("factory.embedder.noop — set NGROK_BASE_URL to enable real embeddings")
     return NoopEmbeddingProvider()
 
 
@@ -80,31 +117,44 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
         os.path.dirname(__file__), "..", "..", "prompts"
     )
 
-    # --- Classifier (stub — replaced in Sprint 9) -----------------------
-    classifier = StubClassifier()
+    # --- PromptRegistry (built first — classifier depends on it) -----------
+    prompt_registry = PromptRegistry(prompts_dir=_prompts_dir)
+    container.register("prompt_registry", prompt_registry)
+
+    # --- LLM (independent circuit breakers per use-site) -------------------
+    agent_llm = _build_model_selector()       # RAGAgent + HybridAgent
+    classifier_llm = _build_model_selector()  # QueryClassifierAgent — separate CB state
+
+    # --- Classifier --------------------------------------------------------
+    if isinstance(agent_llm, ModelSelector):
+        classifier: QueryClassifierAgent | StubClassifier = QueryClassifierAgent(
+            llm=classifier_llm, registry=prompt_registry
+        )
+        logger.info("factory.classifier.query_classifier_agent_enabled")
+    else:
+        classifier = StubClassifier()
+        logger.warning("factory.classifier.stub — LLM not configured, using StubClassifier")
     container.register("query_classifier", classifier)
 
-    # --- RAG retrieval chain -------------------------------------------
+    # --- RAG retrieval chain -----------------------------------------------
     vector_store = InMemoryVectorStore()
     embedder = _select_embedder()
     retriever = VectorRetriever(store=vector_store, embedder=embedder)
     reranker = IdentityReranker()
     context_builder = ContextBuilder()
-    prompt_registry = PromptRegistry(prompts_dir=_prompts_dir)
 
     container.register("vector_store", vector_store)
     container.register("embedding_provider", embedder)
     container.register("vector_retriever", retriever)
     container.register("reranker", reranker)
     container.register("context_builder", context_builder)
-    container.register("prompt_registry", prompt_registry)
 
-    # --- Agents --------------------------------------------------------
+    # --- Agents ------------------------------------------------------------
     rag_agent = RAGAgent(
         retriever=retriever,
         reranker=reranker,
         context_builder=context_builder,
-        llm=_NullLLM(),
+        llm=agent_llm,
         registry=prompt_registry,
     )
     sql_agent = SQLAgent(
@@ -115,7 +165,7 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     hybrid_agent = HybridAgent(
         rag_agent=rag_agent,
         sql_agent=sql_agent,
-        llm=_NullLLM(),
+        llm=agent_llm,
         registry=prompt_registry,
     )
 
@@ -123,7 +173,7 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     container.register("sql_agent", sql_agent)
     container.register("hybrid_agent", hybrid_agent)
 
-    # --- Use cases -------------------------------------------------------
+    # --- Use cases ---------------------------------------------------------
     rag_uc = RunRAGUseCase(rag_agent=rag_agent)
     sql_uc = RunSQLUseCase(sql_agent=sql_agent)
     hybrid_uc = RunHybridUseCase(hybrid_agent=hybrid_agent)
