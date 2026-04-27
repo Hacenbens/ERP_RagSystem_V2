@@ -14,6 +14,7 @@ from src.domain.chunk import Chunk
 from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.llm_port import LLMPort
+from src.domain.ports.vector_store_port import VectorStorePort
 from src.infrastructure.auth.jwt_handler import JWTHandler
 from src.infrastructure.auth.user_repository import InMemoryUserRepository
 from src.infrastructure.di.container import DIContainer
@@ -25,6 +26,7 @@ from src.infrastructure.rag.vector_retriever import VectorRetriever
 from src.infrastructure.storage.local_asset_storage import LocalAssetStorage
 from src.infrastructure.workers.celery_job_dispatcher import CeleryJobDispatcher
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
+from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
 from src.infrastructure.workers.chunkers.chunker_factory import ChunkerFactory
 from src.infrastructure.workers.dead_letter_repository import (
     InMemoryDeadLetterRepository,
@@ -102,6 +104,18 @@ def _select_embedder() -> EmbeddingPort:
     return NoopEmbeddingProvider()
 
 
+def _select_vector_store(dim: int = 768) -> VectorStorePort:
+    """Return MilvusVectorStore when MILVUS_URI is set, else InMemoryVectorStore."""
+    uri = os.environ.get("MILVUS_URI", "")
+    if uri:
+        logger.info("factory.vector_store.milvus_enabled", uri=uri)
+        return MilvusVectorStore(uri=uri, dim=dim)
+    logger.warning(
+        "factory.vector_store.in_memory — set MILVUS_URI for persistent vector search"
+    )
+    return InMemoryVectorStore()
+
+
 def build_query_chain(container: DIContainer, prompts_dir: str | None = None) -> None:
     """Wire the hybrid query chain into *container*.
 
@@ -137,7 +151,7 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     container.register("query_classifier", classifier)
 
     # --- RAG retrieval chain -----------------------------------------------
-    vector_store = InMemoryVectorStore()
+    vector_store = _select_vector_store()
     embedder = _select_embedder()
     retriever = VectorRetriever(store=vector_store, embedder=embedder)
     reranker = IdentityReranker()
@@ -260,16 +274,12 @@ def build_worker_container() -> DIContainer:
             client["erp_rag"]["processed_assets"]
         )
         chunk_store = MongoChunkStore(client["erp_rag"]["chunks"])
-        from src.infrastructure.vector_store.mongo_vector_store import MongoVectorStore
-        vector_store: InMemoryVectorStore | MongoVectorStore = MongoVectorStore(
-            client["erp_rag"]["embedded_assets"]
-        )
     else:
         dead_letter_repo = InMemoryDeadLetterRepository()
         idempotency_store = InMemoryIdempotencyStore()
         chunk_store = InMemoryChunkStore()
-        vector_store = InMemoryVectorStore()
 
+    vector_store = _select_vector_store()
     asset_storage = LocalAssetStorage(base_path=asset_storage_path)
     embedding_port = _select_embedder()
 

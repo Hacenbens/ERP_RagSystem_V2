@@ -153,6 +153,29 @@ class TestDIFactory:
         repo2 = c2.get("user_repository")
         assert repo1 is not repo2  # independent instances
 
+    def test_select_vector_store_returns_in_memory_when_milvus_uri_absent(
+        self, monkeypatch
+    ):
+        """Without MILVUS_URI, _select_vector_store() falls back to InMemoryVectorStore."""
+        monkeypatch.delenv("MILVUS_URI", raising=False)
+        from src.infrastructure.di.factory import _select_vector_store
+        from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
+
+        store = _select_vector_store()
+        assert isinstance(store, InMemoryVectorStore)
+
+    def test_select_vector_store_returns_milvus_when_uri_is_set(
+        self, monkeypatch, tmp_path
+    ):
+        """With MILVUS_URI pointing to a .db file, _select_vector_store() returns MilvusVectorStore."""
+        db_path = str(tmp_path / "factory_test.db")
+        monkeypatch.setenv("MILVUS_URI", db_path)
+        from src.infrastructure.di.factory import _select_vector_store
+        from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
+
+        store = _select_vector_store(dim=4)
+        assert isinstance(store, MilvusVectorStore)
+
 
 # ---------------------------------------------------------------------------
 # AuthUseCase constructed with mocked dependencies
