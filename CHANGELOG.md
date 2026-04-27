@@ -5,6 +5,21 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [sprint-9-partial] — 2026-04-27
+
+### Added
+- feat(vector-store): MilvusVectorStore — FLAT/COSINE collection, upsert idempotency (delete-before-insert), tenant isolation via filter expressions, erp_module filter support, Milvus Lite (.db) and full Milvus server URI support
+- feat(di): `_select_vector_store()` factory helper — env-driven selection of MilvusVectorStore (MILVUS_URI set) or InMemoryVectorStore fallback; wired into both build_query_chain() and build_worker_container()
+- feat(di): remove broken MongoVectorStore branch (NotImplementedError on upsert) from worker container; embed tasks now route through Milvus in production
+- test(vector-store): 25 unit tests for MilvusVectorStore (upsert, search, tenant isolation, idempotency tracking, content truncation, port compliance)
+- test(vector-store): 20 integration tests against real Milvus Lite .db file — full pipeline, tenant isolation (security gate), erp_module filter, upsert idempotency
+- test(di): 2 factory tests verifying env-driven vector store selection
+
+### Fixed
+- fix(di): removed MongoVectorStore.upsert NotImplementedError that silently broke all embed tasks in production when MONGODB_URI was set
+
+---
+
 ## [sprint-8-done] — 2026-04-26
 
 ### Added
