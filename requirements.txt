@@ -113,3 +113,4 @@ unstructured==0.22.22
 
 # Task 4 — embed_task: vector store client (idempotent embedding, no duplicate vectors)
 pymilvus==2.5.18
+setuptools>=68,<71          # milvus-lite depends on pkg_resources (removed in Python 3.12+)
