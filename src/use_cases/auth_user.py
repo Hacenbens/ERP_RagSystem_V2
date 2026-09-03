@@ -10,8 +10,8 @@ from dataclasses import dataclass
 
 from src.domain.user_role import UserRole
 from src.infrastructure.auth.jwt_handler import JWTHandler
+from src.domain.ports.user_repository_port import UserRepositoryPort
 from src.infrastructure.auth.user_repository import (
-    InMemoryUserRepository,
     UserRecord,
 )
 
@@ -43,13 +43,13 @@ class AuthUseCase:
     """Orchestrates authentication flows.
 
     Ports:
-        user_repository: InMemoryUserRepository (or future MongoUserRepository)
+        user_repository: any UserRepositoryPort (in-memory or MongoDB)
         jwt_handler: JWTHandler
     """
 
     def __init__(
         self,
-        user_repository: InMemoryUserRepository,
+        user_repository: UserRepositoryPort,
         jwt_handler: JWTHandler,
     ) -> None:
         self._repo = user_repository

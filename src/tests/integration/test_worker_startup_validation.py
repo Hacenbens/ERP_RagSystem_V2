@@ -70,6 +70,15 @@ class TestTheProbeExercisesAuthentication:
         fake.__getitem__.assert_any_call("erp_rag")
         fake.__getitem__.return_value.list_collection_names.assert_called_once()
 
+    def test_the_container_connects_only_once(self, monkeypatch):
+        """The user repository and the worker stores share one connection."""
+        monkeypatch.setenv("MONGODB_URI", "mongodb://ignored:27017")
+
+        with patch("pymongo.MongoClient", return_value=MagicMock()) as client:
+            build_worker_container()
+
+        assert client.call_count == 1
+
     def test_an_auth_error_from_the_probe_fails_the_build(self, monkeypatch):
         from pymongo.errors import OperationFailure
 

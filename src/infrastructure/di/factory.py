@@ -15,9 +15,13 @@ from src.domain.chunk import Chunk
 from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.llm_port import LLMPort
+from src.domain.ports.user_repository_port import UserRepositoryPort
 from src.domain.ports.vector_store_port import VectorStorePort
 from src.infrastructure.auth.jwt_handler import JWTHandler
-from src.infrastructure.auth.user_repository import InMemoryUserRepository
+from src.infrastructure.auth.user_repository import (
+    InMemoryUserRepository,
+    MongoUserRepository,
+)
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.persistence.chunk_store import InMemoryChunkStore, MongoChunkStore
 from src.infrastructure.rag.context_builder import ContextBuilder
@@ -247,8 +251,11 @@ def build_container() -> DIContainer:
     container = DIContainer()
 
     # --- Auth -----------------------------------------------------------
+    mongo_uri = os.environ.get("MONGODB_URI", "")
+    mongo_client = _connect_mongo(mongo_uri) if mongo_uri else None
+
     jwt_handler = JWTHandler()
-    user_repo = InMemoryUserRepository()
+    user_repo = _select_user_repository(mongo_client)
     auth_use_case = AuthUseCase(user_repository=user_repo, jwt_handler=jwt_handler)
 
     container.register("jwt_handler", jwt_handler)
@@ -270,6 +277,26 @@ def build_container() -> DIContainer:
 
 class MongoUnavailableError(RuntimeError):
     """Raised when MONGODB_URI is set but the server cannot be reached."""
+
+
+def _select_user_repository(client: "Any | None") -> UserRepositoryPort:
+    """Return MongoUserRepository when a database is available, else in-memory.
+
+    Takes an already-connected client rather than a URI so a container opens
+    one connection and probes it once, instead of one per store.
+
+    An in-memory repository holds a separate table per process, so a user
+    registered against one uvicorn worker did not exist for the next request
+    served by another, and every account vanished on restart.
+    """
+    if client is not None:
+        logger.info("factory.user_repository.mongo")
+        return MongoUserRepository(client["erp_rag"]["users"])
+    logger.warning(
+        "factory.user_repository.in_memory — accounts are lost on restart and "
+        "are not shared between processes; set MONGODB_URI to persist them"
+    )
+    return InMemoryUserRepository()
 
 
 def _connect_mongo(mongo_uri: str) -> "Any":
@@ -321,8 +348,11 @@ def build_worker_container() -> DIContainer:
     container = DIContainer()
 
     # --- Auth (shared with API process) ----------------------------------
+    mongo_uri = os.environ.get("MONGODB_URI", "")
+    mongo_client = _connect_mongo(mongo_uri) if mongo_uri else None
+
     jwt_handler = JWTHandler()
-    user_repo = InMemoryUserRepository()
+    user_repo = _select_user_repository(mongo_client)
     auth_use_case = AuthUseCase(user_repository=user_repo, jwt_handler=jwt_handler)
 
     container.register("jwt_handler", jwt_handler)
@@ -330,22 +360,20 @@ def build_worker_container() -> DIContainer:
     container.register("auth_use_case", auth_use_case)
 
     # --- Worker dependencies ---------------------------------------------
-    mongo_uri = os.environ.get("MONGODB_URI", "")
     asset_storage_path = os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
 
     dead_letter_repo: InMemoryDeadLetterRepository | MongoDeadLetterRepository
     idempotency_store: InMemoryIdempotencyStore | MongoIdempotencyStore
     chunk_store: InMemoryChunkStore | MongoChunkStore
 
-    if mongo_uri:
-        client: Any = _connect_mongo(mongo_uri)
+    if mongo_client is not None:
         dead_letter_repo = MongoDeadLetterRepository(
-            client["erp_rag"]["failed_tasks"]
+            mongo_client["erp_rag"]["failed_tasks"]
         )
         idempotency_store = MongoIdempotencyStore(
-            client["erp_rag"]["processed_assets"]
+            mongo_client["erp_rag"]["processed_assets"]
         )
-        chunk_store = MongoChunkStore(client["erp_rag"]["chunks"])
+        chunk_store = MongoChunkStore(mongo_client["erp_rag"]["chunks"])
     else:
         dead_letter_repo = InMemoryDeadLetterRepository()
         idempotency_store = InMemoryIdempotencyStore()
