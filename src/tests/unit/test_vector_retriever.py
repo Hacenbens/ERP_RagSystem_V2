@@ -10,11 +10,13 @@ import json
 from src.domain.models.scored_chunk import ScoredChunk
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.vector_store_port import VectorStorePort
+from src.domain.exceptions import EmbeddingUnavailableError
 from src.infrastructure.rag.embedding_providers import (
     NgrokEmbeddingProvider,
     NoopEmbeddingProvider,
 )
 from src.infrastructure.rag.vector_retriever import VectorRetriever
+from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 
 
 class _FakeEmbedder(EmbeddingPort):
@@ -119,13 +121,17 @@ class TestVectorRetriever:
 
 
 class TestNoopEmbeddingProvider:
-    def test_embed_returns_768_dimensional_zero_vector(self) -> None:
+    def test_embed_refuses_instead_of_returning_a_zero_vector(self) -> None:
+        """A zero vector is worse than an error: it looks like it worked.
+
+        Cosine similarity against a zero vector is 0.0 for every stored
+        chunk, so retrieval returned an arbitrary k documents, the reranker
+        ordered meaningless scores, and the LLM cited them as grounding.
+        """
         provider = NoopEmbeddingProvider()
 
-        vector = provider.embed("ignored input")
-
-        assert len(vector) == 768
-        assert set(vector) == {0.0}
+        with pytest.raises(EmbeddingUnavailableError, match="No embedding provider"):
+            provider.embed("ignored input")
 
 
 class TestNgrokEmbeddingProvider:
@@ -185,7 +191,70 @@ class TestNgrokEmbeddingProvider:
             provider.embed("finance")
 
     def test_embed_raises_when_base_url_not_configured(self) -> None:
+        """An explicit base_url="" must mean "unconfigured", not "read the env".
+
+        The constructor used `base_url or os.environ.get(...)`, so the empty
+        string fell through to the ambient environment. With a real
+        NGROK_BASE_URL in the developer's .env this test made a live HTTPS
+        call and failed on the remote 404 rather than testing anything.
+        """
         provider = NgrokEmbeddingProvider(base_url="", api_key="")
 
-        with pytest.raises(RuntimeError, match="NGROK_BASE_URL"):
+        with pytest.raises(EmbeddingUnavailableError, match="NGROK_BASE_URL"):
             provider.embed("vat rules")
+
+    def test_explicit_empty_base_url_ignores_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("NGROK_BASE_URL", "https://should-not-be-used.example")
+        provider = NgrokEmbeddingProvider(base_url="", api_key="")
+
+        assert provider._base_url == ""
+
+    def test_http_failure_becomes_embedding_unavailable(self) -> None:
+        """A dead tunnel used to raise httpx.HTTPStatusError all the way to a 500."""
+        def _handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, text="tunnel not found")
+
+        provider = NgrokEmbeddingProvider(
+            base_url="https://dead.example",
+            api_key="",
+            transport=httpx.MockTransport(_handler),
+        )
+        with pytest.raises(EmbeddingUnavailableError):
+            provider.embed("vat rules")
+
+
+class TestRetrieverDegradesOnEmbeddingOutage:
+    """B-6 — a dead embedding service must not become a 500 on every RAG query.
+
+    Live, the ngrok tunnel was down and every path on it returned 404. The
+    httpx.HTTPStatusError travelled from NgrokEmbeddingProvider through
+    VectorRetriever and RAGAgent uncaught, straight to the route.
+    """
+
+    def test_retrieve_returns_no_chunks_when_embedding_is_unavailable(self) -> None:
+        retriever = VectorRetriever(
+            store=InMemoryVectorStore(),
+            embedder=NoopEmbeddingProvider(),
+        )
+
+        assert retriever.retrieve("vat rules", k=5, tenant_id="t1") == []
+
+    def test_retrieve_does_not_query_the_store_when_embedding_fails(self) -> None:
+        """No embedding means no query vector — searching would be meaningless."""
+
+        class _RecordingStore(InMemoryVectorStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.searches = 0
+
+            def search_similar(self, query_embedding, k, tenant_id, erp_module=None):
+                self.searches += 1
+                return super().search_similar(query_embedding, k, tenant_id, erp_module)
+
+        store = _RecordingStore()
+        retriever = VectorRetriever(store=store, embedder=NoopEmbeddingProvider())
+
+        retriever.retrieve("vat rules", k=5, tenant_id="t1")
+        assert store.searches == 0
