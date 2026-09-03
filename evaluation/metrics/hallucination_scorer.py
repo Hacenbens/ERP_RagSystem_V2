@@ -8,7 +8,6 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 HALLUCINATION_MAX = float(os.environ.get("HALLUCINATION_MAX", "0.05"))
 

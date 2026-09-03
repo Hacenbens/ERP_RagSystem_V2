@@ -125,7 +125,7 @@ class HybridAgent(BaseAgent):
             )
             result = HybridResult.sql_fallback(sql_outcome)  # type: ignore[arg-type]
         else:
-            result = self._merge(query, rag_outcome, sql_outcome)
+            result = self._merge(query, rag_outcome, sql_outcome)  # type: ignore[arg-type]
             HYBRID_SUCCESS_RATE.inc()
 
         latency_s = time.perf_counter() - t0

@@ -1,6 +1,8 @@
 """Unit tests for PromptRegistry — Sprint 7 Task 5."""
 from __future__ import annotations
 
+from typing import Any
+
 import json
 from pathlib import Path
 
@@ -124,7 +126,7 @@ class TestValidateOutput:
 
     def test_validate_raises_on_additional_property(self, registry: PromptRegistry) -> None:
         pv = registry.resolve("rag_answer")
-        bad_output = {
+        bad_output: dict[str, Any] = {
             "grounded": False,
             "answer": None,
             "cited_chunks": [],
@@ -201,6 +203,7 @@ class TestYamlLoading:
 
     def test_rag_answer_schema_file_exists(self, registry: PromptRegistry) -> None:
         pv = registry.resolve("rag_answer")
+        assert pv.schema_path is not None
         schema_file = PROMPTS_DIR / pv.schema_path
         assert schema_file.exists()
         schema = json.loads(schema_file.read_text())
@@ -208,6 +211,7 @@ class TestYamlLoading:
 
     def test_hybrid_orchestrator_schema_file_exists(self, registry: PromptRegistry) -> None:
         pv = registry.resolve("hybrid_orchestrator")
+        assert pv.schema_path is not None
         schema_file = PROMPTS_DIR / pv.schema_path
         assert schema_file.exists()
 
@@ -241,6 +245,7 @@ class TestSqlGeneratorPrompt:
         self, registry: PromptRegistry
     ) -> None:
         pv = registry.resolve("sql_generator", "production")
+        assert pv.schema_path is not None
         schema_file = PROMPTS_DIR / pv.schema_path
         assert schema_file.exists()
         schema = json.loads(schema_file.read_text())
@@ -304,6 +309,7 @@ class TestEvaluatorPrompt:
         self, registry: PromptRegistry
     ) -> None:
         pv = registry.resolve("evaluator", "production")
+        assert pv.schema_path is not None
         schema_file = PROMPTS_DIR / pv.schema_path
         assert schema_file.exists()
         schema = json.loads(schema_file.read_text())

@@ -15,6 +15,7 @@ from src.infrastructure.auth.user_repository import (
     UserAlreadyExistsError,
     UserNotFoundError,
 )
+from src.domain.user_role import UserRole
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,14 +29,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8)
-    role: str = Field(default="VIEWER", pattern="^(ADMIN|MANAGER|ANALYST|VIEWER)$")
+    role: UserRole = Field(default=UserRole.REPORTING_ANALYST)
     tenant_id: str = Field(default="default", min_length=1)
 
 
 class RegisterResponse(BaseModel):
     user_id: str
     username: str
-    role: str
+    role: UserRole
     tenant_id: str
 
 
@@ -154,7 +155,7 @@ async def reset_password(
             reset_token=body.reset_token,
             new_password=body.new_password,
         )
-    except UserNotFoundError as exc:
+    except UserNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token.",

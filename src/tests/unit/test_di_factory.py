@@ -116,10 +116,10 @@ class TestDIFactory:
     def test_build_container_jwt_handler_is_functional(self):
         container = build_container()
         jwt_handler = container.get("jwt_handler")
-        token = jwt_handler.issue(user_id="u1", role="ADMIN", tenant_id="t1")
+        token = jwt_handler.issue(user_id="u1", role="SUPER_ADMIN", tenant_id="t1")
         claims = jwt_handler.verify(token)
         assert claims.user_id == "u1"
-        assert claims.role == "ADMIN"
+        assert claims.role == "SUPER_ADMIN"
 
     def test_build_container_auth_use_case_can_register_and_login(self):
         container = build_container()
@@ -128,20 +128,20 @@ class TestDIFactory:
         result = auth_use_case.register(
             username="factory_test_user",
             password="testpass123",
-            role="MANAGER",
+            role="PRODUCT_MANAGER",
             tenant_id="acme",
         )
         assert result.username == "factory_test_user"
-        assert result.role == "MANAGER"
+        assert result.role == "PRODUCT_MANAGER"
 
         login = auth_use_case.login("factory_test_user", "testpass123")
         assert login.access_token
-        assert login.role == "MANAGER"
+        assert login.role == "PRODUCT_MANAGER"
 
     def test_build_container_user_repository_is_wired(self):
         container = build_container()
         repo = container.get("user_repository")
-        repo.create(username="di_test_user", password="pass12345", role="VIEWER", tenant_id="t")
+        repo.create(username="di_test_user", password="pass12345", role="REPORTING_ANALYST", tenant_id="t")
         record = repo.get_by_username("di_test_user")
         assert record.username == "di_test_user"
 
@@ -191,7 +191,7 @@ class TestAuthUseCaseWithMocks:
             user_id="mock-uid",
             username="mock-user",
             hashed_password="hashed",
-            role="ANALYST",
+            role="REPORTING_ANALYST",
             tenant_id="mock-tenant",
         )
         mock_jwt = MagicMock()
@@ -202,10 +202,10 @@ class TestAuthUseCaseWithMocks:
 
         mock_repo.verify_password.assert_called_once_with("mock-user", "password")
         mock_jwt.issue.assert_called_once_with(
-            user_id="mock-uid", role="ANALYST", tenant_id="mock-tenant"
+            user_id="mock-uid", role="REPORTING_ANALYST", tenant_id="mock-tenant"
         )
         assert result.access_token == "mock.jwt.token"
-        assert result.role == "ANALYST"
+        assert result.role == "REPORTING_ANALYST"
 
     def test_use_case_register_calls_repository(self):
         from src.use_cases.auth_user import AuthUseCase
@@ -216,14 +216,14 @@ class TestAuthUseCaseWithMocks:
             user_id="new-uid",
             username="newuser",
             hashed_password="h",
-            role="VIEWER",
+            role="REPORTING_ANALYST",
             tenant_id="t",
         )
         use_case = AuthUseCase(user_repository=mock_repo, jwt_handler=MagicMock())
         result = use_case.register("newuser", "pass12345")
 
         mock_repo.create.assert_called_once_with(
-            username="newuser", password="pass12345", role="VIEWER", tenant_id="default"
+            username="newuser", password="pass12345", role="REPORTING_ANALYST", tenant_id="default"
         )
         assert result.username == "newuser"
 
@@ -233,7 +233,7 @@ class TestAuthUseCaseWithMocks:
 
         mock_repo = MagicMock()
         mock_repo.get_by_username.return_value = UserRecord(
-            user_id="u1", username="user1", hashed_password="h", role="VIEWER", tenant_id="t"
+            user_id="u1", username="user1", hashed_password="h", role="REPORTING_ANALYST", tenant_id="t"
         )
         use_case = AuthUseCase(user_repository=mock_repo, jwt_handler=MagicMock())
         result = use_case.request_password_reset("user1")

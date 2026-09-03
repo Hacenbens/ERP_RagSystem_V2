@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 from evaluation.benchmarks.sql_benchmark import (
     BenchmarkReport,
     SQLTestCase,
-    SQLTestResult,
     _check_patterns,
     _has_tenant_filter,
     _offline_stub_sql,
@@ -27,7 +26,6 @@ from evaluation.benchmarks.sql_benchmark import (
 )
 from evaluation.benchmarks.rag_benchmark import (
     RAGTestCase,
-    RAGTestResult,
     _offline_stub_retrieve,
     _precision_at_k,
     load_test_cases as rag_load_test_cases,

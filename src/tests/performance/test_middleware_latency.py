@@ -23,6 +23,8 @@ Naming: test_{stack}_{scenario}_{expected_outcome}
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import json
 import sys
 import time
@@ -31,8 +33,6 @@ from typing import Callable
 
 import pytest
 from fastapi import FastAPI, Request
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 from src.infrastructure.auth.jwt_handler import JWTHandler
 from src.infrastructure.auth.user_repository import InMemoryUserRepository
 from src.infrastructure.di.container import DIContainer
+from src.infrastructure.di.factory import build_query_chain
 from src.middleware.AuthMiddleware import AuthMiddleware
 from src.middleware.LoggingMiddleware import LoggingMiddleware
 from src.middleware.PIIMaskingMiddleware import PIIMaskingMiddleware
@@ -83,6 +84,12 @@ def _build_full_stack_app(jwt_handler: JWTHandler) -> FastAPI:
     container.register("jwt_handler", jwt_handler)
     container.register("user_repository", user_repo)
     container.register("auth_use_case", auth_use_case)
+    # Sprint 7 added route_query_use_case, rag_use_case and hybrid_use_case to
+    # DIContainer.REQUIRED_PORTS but never updated this factory, so validate()
+    # raised at collection time and all eight tests in this module have been
+    # erroring out ever since. pytest.ini deselects the performance marker and
+    # CI ran only src/tests/unit, so nothing surfaced it.
+    build_query_chain(container)
     container.validate()
 
     app = FastAPI()
@@ -162,7 +169,7 @@ def jwt_handler() -> JWTHandler:
 
 
 @pytest.fixture(scope="module")
-def full_stack_client(jwt_handler) -> TestClient:
+def full_stack_client(jwt_handler) -> Iterator[TestClient]:
     app = _build_full_stack_app(jwt_handler)
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c

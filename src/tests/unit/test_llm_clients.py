@@ -16,7 +16,10 @@ import httpx
 import pytest
 
 from src.domain.ports.llm_port import LLMPort
-from src.infrastructure.generation.gemini_llm_client import GeminiLLMClient
+from src.infrastructure.generation.gemini_llm_client import (
+    _DEFAULT_MODEL,
+    GeminiLLMClient,
+)
 from src.infrastructure.generation.vllm_llm_client import vLLMLLMClient
 
 # ---------------------------------------------------------------------------
@@ -103,8 +106,16 @@ class TestGeminiLLMClientContract:
     def test_implements_llm_port(self):
         assert isinstance(_make_gemini_client(), LLMPort)
 
-    def test_default_model_is_flash_lite(self):
-        assert _make_gemini_client()._model == "gemini-2.5-flash-lite"
+    def test_default_model_matches_the_module_default(self):
+        """Assert against the constant, not a copy of its value.
+
+        This test used to hard-code "gemini-2.5-flash-lite". Google retired
+        that id — it now returns 404 "no longer available to new users" — and
+        because the literal was duplicated here, the test kept passing while
+        every real call failed. Tracking the constant means a stale default
+        shows up as a live failure, not a green suite.
+        """
+        assert _make_gemini_client()._model == _DEFAULT_MODEL
 
     def test_custom_model_stored(self):
         with patch("src.infrastructure.generation.gemini_llm_client.genai.Client"):
@@ -223,7 +234,7 @@ class TestGeminiLLMClientFromEnv:
         monkeypatch.delenv("GEMINI_MODEL", raising=False)
         with patch("src.infrastructure.generation.gemini_llm_client.genai.Client"):
             c = GeminiLLMClient.from_env()
-        assert c._model == "gemini-2.5-flash-lite"
+        assert c._model == _DEFAULT_MODEL
 
     def test_from_env_custom_model(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "k")

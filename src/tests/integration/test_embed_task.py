@@ -38,7 +38,6 @@ from src.infrastructure.workers.tasks.embed_task import (
     embed_asset,
 )
 from src.observability.prometheus_metrics import (
-    EMBED_TASK_DURATION,
     EMBED_TASKS_DISPATCHED,
     EMBED_TASKS_FAILED,
 )

@@ -95,13 +95,20 @@ async def query_endpoint(
 
 
 def _build_response(result: RAGResult | SQLResult | HybridResult) -> QueryResponse:
-    """Convert a domain result into the HTTP response shape."""
+    """Convert a domain result into the HTTP response shape.
+
+    ``synthetic`` is surfaced at the top level, not buried in ``result``, so a
+    caller cannot miss it. Without a configured ERP database the SQL pipeline
+    answers from InMemoryExecutor's hardcoded rows — a plain HTTP 200 reading
+    "total_amount: 1500000.0" that a business user would take for revenue.
+    """
     if isinstance(result, HybridResult):
         return QueryResponse(
             intent="HYBRID",
             result=dataclasses.asdict(result),
             rag_only=result.rag_only,
             sql_only=result.sql_only,
+            synthetic=_is_synthetic(result),
         )
     if isinstance(result, RAGResult):
         return QueryResponse(
@@ -109,13 +116,25 @@ def _build_response(result: RAGResult | SQLResult | HybridResult) -> QueryRespon
             result=dataclasses.asdict(result),
             rag_only=False,
             sql_only=False,
+            synthetic=False,
         )
     return QueryResponse(
         intent="SQL",
         result=dataclasses.asdict(result),
         rag_only=False,
         sql_only=False,
+        synthetic=result.synthetic,
     )
+
+
+def _is_synthetic(result: HybridResult) -> bool:
+    """A hybrid answer is synthetic if its SQL half was.
+
+    Merged prose quotes the SQL figures, so a synthetic SQL branch taints the
+    whole answer even when the RAG half is genuine.
+    """
+    sql_part = getattr(result, "sql_result", None)
+    return bool(getattr(sql_part, "synthetic", False))
 
 
 __all__ = ["router"]

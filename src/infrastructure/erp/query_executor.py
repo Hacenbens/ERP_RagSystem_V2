@@ -13,12 +13,12 @@ Falls back to InMemoryExecutor when PG_HOST is unavailable (tests / CI).
 """
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
 
+from helpers.config import erp_pg_dsn
 from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS, SQL_STAGE3_ROWS
 from src.infrastructure.erp.query_log_repository import (
     InMemoryQueryLogRepository,
@@ -52,6 +52,18 @@ class ExecutionResult:
     latency_ms: float
     columns: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    executor: str = "in_memory"
+
+    @property
+    def synthetic(self) -> bool:
+        """True when these rows were invented rather than read from the ERP.
+
+        InMemoryExecutor returns hardcoded values — 1_500_000.0 for any
+        SUM(amount), two fixed sales orders, two fixed employees. Presenting
+        those as ERP figures is the most dangerous thing this pipeline can
+        do, so every layer above carries this flag.
+        """
+        return self.executor != "postgresql"
 
     @property
     def success(self) -> bool:
@@ -131,15 +143,31 @@ class QueryExecutor:
         pg_dsn: Optional[str] = None,
     ) -> None:
         self._log = query_log or InMemoryQueryLogRepository()
-        self._pg_dsn = pg_dsn or os.environ.get("ERP_PG_DSN", "")
+        # erp_pg_dsn() assembles ERP_PG_HOST/PORT/DATABASE/USER/PASSWORD.
+        # The old code read an ERP_PG_DSN variable that is set nowhere, so
+        # this always fell through to InMemoryExecutor.
+        self._pg_dsn = pg_dsn if pg_dsn is not None else erp_pg_dsn()
         self._executor = self._build_executor()
+        self._executor_name = (
+            "postgresql" if isinstance(self._executor, PostgreSQLExecutor) else "in_memory"
+        )
+        if self._executor_name == "in_memory":
+            logger.warning(
+                "sql.stage3.synthetic_executor — no ERP_PG_PASSWORD configured; "
+                "results are synthetic and must not be presented as ERP data"
+            )
+
+    @property
+    def executor_name(self) -> str:
+        """Which backend answers queries: "postgresql" or "in_memory"."""
+        return self._executor_name
 
     def _build_executor(self):
         if self._pg_dsn:
             try:
                 return PostgreSQLExecutor(self._pg_dsn)
             except Exception:
-                pass
+                logger.error("sql.stage3.pg_connect_failed — falling back to synthetic rows")
         return InMemoryExecutor()
 
     def execute(
@@ -184,6 +212,7 @@ class QueryExecutor:
                 row_count=len(rows),
                 latency_ms=latency_ms,
                 columns=columns,
+                executor=self._executor_name,
             )
             SQL_STAGE3_ROWS.observe(len(rows))
             logger.info(
@@ -206,6 +235,7 @@ class QueryExecutor:
                 row_count=0,
                 latency_ms=latency_ms,
                 error=str(exc),
+                executor=self._executor_name,
             )
             logger.error("sql.stage3.execution_error", query_id=query_id, error=str(exc))
 

@@ -24,10 +24,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
-from celery.exceptions import MaxRetriesExceededError
 
 from src.domain.chunk import Chunk
-from src.domain.ingest import FailedTaskEntry
 from src.domain.ports.asset_storage_port import AssetStoragePort
 from src.domain.ports.chunk_store_port import ChunkStorePort
 from src.infrastructure.di.container import DIContainer
@@ -400,25 +398,21 @@ class TestIngestAssetRetryPolicy:
 class TestExponentialBackoffCountdown:
     def test_first_retry_countdown_is_30_seconds(self):
         """Attempt 0 (retries=0): countdown = 30 * 2^0 = 30 s."""
-        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 0), 600)
         assert countdown == 30
 
     def test_second_retry_countdown_is_60_seconds(self):
         """Attempt 1 (retries=1): countdown = 30 * 2^1 = 60 s."""
-        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 1), 600)
         assert countdown == 60
 
     def test_third_retry_countdown_is_120_seconds(self):
         """Attempt 2 (retries=2): countdown = 30 * 2^2 = 120 s."""
-        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 2), 600)
         assert countdown == 120
 
     def test_countdown_capped_at_max_delay(self):
         """Very high retry index must not exceed MAX_RETRY_DELAY_SECONDS."""
-        from src.infrastructure.workers.tasks.ingest_task import BASE_RETRY_DELAY_SECONDS, MAX_RETRY_DELAY_SECONDS
         countdown = min(BASE_RETRY_DELAY_SECONDS * (2 ** 20), MAX_RETRY_DELAY_SECONDS)
         assert countdown == MAX_RETRY_DELAY_SECONDS
 

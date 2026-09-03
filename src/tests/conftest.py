@@ -9,12 +9,12 @@ Provides a fully wired FastAPI TestClient with:
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from starlette.testclient import TestClient
 
-from unittest.mock import MagicMock
 
 from src.infrastructure.auth.jwt_handler import JWTHandler
 from src.infrastructure.auth.user_repository import InMemoryUserRepository
@@ -88,7 +88,7 @@ def app(jwt_handler):
 
 
 @pytest.fixture()
-def client(app) -> TestClient:
+def client(app) -> Iterator[TestClient]:
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
 
@@ -99,7 +99,7 @@ def registered_user(client) -> dict:
     resp = client.post("/auth/register", json={
         "username": "testuser",
         "password": "testpass123",
-        "role": "VIEWER",
+        "role": "REPORTING_ANALYST",
         "tenant_id": "tenant-abc",
     })
     assert resp.status_code == 201

@@ -9,6 +9,7 @@ before returning.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from src.domain.chunk import Chunk
 from src.domain.chunk_strategy import ChunkStrategy
@@ -43,6 +44,10 @@ from src.agents.sql_agent import SQLAgent
 from src.infrastructure.erp.query_executor import QueryExecutor
 from src.infrastructure.erp.query_generator import QueryGenerator
 from src.infrastructure.erp.query_validator import QueryValidator
+from src.infrastructure.generation.degraded_mode_service import (
+    DegradedModeLLM,
+    DegradedModeService,
+)
 from src.infrastructure.generation.gemini_llm_client import GeminiLLMClient
 from src.infrastructure.generation.model_selector import ModelSelector
 from src.infrastructure.generation.vllm_llm_client import vLLMLLMClient
@@ -95,6 +100,24 @@ def _build_model_selector() -> ModelSelector | _NullLLM:
     return _NullLLM()
 
 
+def _with_degraded_mode(llm: ModelSelector | _NullLLM) -> LLMPort:
+    """Wrap a real selector so provider exhaustion degrades instead of raising.
+
+    ModelSelector raises LLMUnavailableError once every provider is spent.
+    Reaching a route handler, that is an unhandled 500. DegradedModeService
+    turns it into the last good answer for the same prompt, or a well-formed
+    "temporarily unavailable" payload.
+
+    Sprint 8 built this and never connected it, because DegradedModeService
+    takes an explicit query_hash and so is not an LLMPort; DegradedModeLLM is
+    the adapter. _NullLLM is passed through untouched — it already cannot
+    fail, and wrapping it would only hide that no provider is configured.
+    """
+    if isinstance(llm, ModelSelector):
+        return DegradedModeLLM(DegradedModeService(selector=llm))
+    return llm
+
+
 def _select_embedder() -> EmbeddingPort:
     """Return NgrokEmbeddingProvider when NGROK_BASE_URL is set, else NoopEmbeddingProvider."""
     if os.environ.get("NGROK_BASE_URL"):
@@ -136,11 +159,16 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     container.register("prompt_registry", prompt_registry)
 
     # --- LLM (independent circuit breakers per use-site) -------------------
-    agent_llm = _build_model_selector()       # RAGAgent + HybridAgent
-    classifier_llm = _build_model_selector()  # QueryClassifierAgent — separate CB state
+    agent_selector = _build_model_selector()       # RAGAgent + HybridAgent
+    classifier_llm = _build_model_selector()       # QueryClassifierAgent — separate CB state
+
+    # Answer generation degrades to a cached or placeholder answer. The
+    # classifier does not: a degraded JSON blob is not a RoutingDecision, so
+    # QueryClassifierAgent handles its own outage by routing to HYBRID.
+    agent_llm = _with_degraded_mode(agent_selector)
 
     # --- Classifier --------------------------------------------------------
-    if isinstance(agent_llm, ModelSelector):
+    if isinstance(agent_selector, ModelSelector):
         classifier: QueryClassifierAgent | StubClassifier = QueryClassifierAgent(
             llm=classifier_llm, registry=prompt_registry
         )
@@ -266,7 +294,7 @@ def build_worker_container() -> DIContainer:
 
     if mongo_uri:
         import pymongo  # type: ignore
-        client = pymongo.MongoClient(mongo_uri)
+        client: Any = pymongo.MongoClient(mongo_uri)
         dead_letter_repo = MongoDeadLetterRepository(
             client["erp_rag"]["failed_tasks"]
         )
@@ -305,6 +333,10 @@ def build_worker_container() -> DIContainer:
         embedding_port=embedding_port,
     )
 
+    # The worker dispatches embed_asset once ingest succeeds, so it needs a
+    # dispatcher of its own — the API process's container is a different object
+    # in a different process.
+    container.register("job_dispatcher", CeleryJobDispatcher())
     container.register("dead_letter_repository", dead_letter_repo)
     container.register("idempotency_store", idempotency_store)
     container.register("chunk_store", chunk_store)

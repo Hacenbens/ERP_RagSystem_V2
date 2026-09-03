@@ -5,11 +5,13 @@ Sprint 7+ will replace with MongoUserRepository.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from uuid import uuid4
 
 from passlib.context import CryptContext
+
+from src.domain.user_role import UserRole
 
 # sha256_crypt: no bcrypt version compatibility issues, suitable for dev/test.
 # Production hardening (argon2 / scrypt) is a Sprint 10 task.
@@ -48,7 +50,7 @@ class InMemoryUserRepository:
         self,
         username: str,
         password: str,
-        role: str = "VIEWER",
+        role: str = UserRole.REPORTING_ANALYST.value,
         tenant_id: str = "default",
     ) -> UserRecord:
         if username in self._store:

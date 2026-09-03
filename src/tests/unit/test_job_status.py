@@ -11,6 +11,8 @@ Strategy
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -31,7 +33,7 @@ JOB_ID = "abc-123-task-id"
 
 
 @pytest.fixture()
-def client() -> TestClient:
+def client() -> Iterator[TestClient]:
     app = FastAPI()
     app.include_router(admin_router)
     with TestClient(app, raise_server_exceptions=True) as c:

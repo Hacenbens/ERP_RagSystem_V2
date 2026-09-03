@@ -14,10 +14,12 @@ The ``cache`` dict is constructor-injectable so tests can inspect or seed it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 from src.domain.exceptions import LLMUnavailableError
 from src.domain.ports.degraded_mode_port import DegradedModePort
+from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.generation.model_selector import ModelSelector
 from src.observability.prometheus_metrics import DEGRADED_MODE_ACTIVATIONS
 from src.observability.structured_logger import get_logger
@@ -50,19 +52,34 @@ class DegradedModeService(DegradedModePort):
     # Primary entry point
     # ------------------------------------------------------------------
 
-    def complete(self, prompt: str, query_hash: str) -> str:
+    def complete(
+        self,
+        prompt: str,
+        query_hash: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int = 512,
+    ) -> str:
         """Return a completion, falling back to cache or a degraded response.
 
         Args:
             prompt: The full prompt string forwarded to the LLM.
             query_hash: A stable identifier for this query used as the cache key.
+            temperature: Forwarded to the provider.
+            max_tokens: Forwarded to the provider.
 
         Returns:
             The LLM answer string, a previously cached answer, or a degraded-mode
             JSON string — always a ``str``, never raises.
+
+        The generation parameters are keyword-only so the original positional
+        ``complete(prompt, query_hash)`` calls keep working. They used to be
+        dropped entirely: every prompt reached the provider at the selector's
+        defaults, ignoring the per-prompt temperature and max_tokens that
+        PromptRegistry resolves.
         """
         try:
-            answer = self._selector.complete(prompt)
+            answer = self._selector.complete(prompt, temperature, max_tokens)
             self.set_cached(query_hash, answer)
             return answer
 
@@ -77,7 +94,7 @@ class DegradedModeService(DegradedModePort):
                 cache_hit=cache_hit,
             )
 
-            return cached if cache_hit else _UNAVAILABLE_RESPONSE
+            return cached if cached is not None else _UNAVAILABLE_RESPONSE
 
     # ------------------------------------------------------------------
     # DegradedModePort implementation
@@ -92,4 +109,46 @@ class DegradedModeService(DegradedModePort):
         self._cache[query_hash] = answer
 
 
-__all__ = ["DegradedModeService"]
+def query_hash(prompt: str) -> str:
+    """Return the cache key for *prompt* — SHA-256 of its normalised text.
+
+    Normalisation collapses surrounding whitespace only. Two requests that
+    resolve to the same prompt share a cache entry, which is what makes a
+    cached answer available during an outage.
+    """
+    return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
+
+
+class DegradedModeLLM(LLMPort):
+    """LLMPort adapter that degrades instead of raising.
+
+    DegradedModeService predates LLMPort and takes an explicit query_hash, so
+    it could not be injected anywhere an LLMPort was expected — which is why
+    Sprint 8's degraded mode shipped complete, tested, and wired to nothing.
+    This adapter derives the hash from the prompt and presents the standard
+    port, so the DI container can place it wherever a raw ModelSelector went.
+
+    Being an LLMPort that never raises is the point: LLMUnavailableError
+    reaching a route handler is an unhandled 500, whereas a degraded answer
+    is a response the caller can render.
+    """
+
+    def __init__(self, service: DegradedModeService) -> None:
+        self._service = service
+
+    def complete(
+        self,
+        prompt: str,
+        temperature: float = 0.0,
+        max_tokens: int = 512,
+    ) -> str:
+        """Return a completion, a cached answer, or the degraded response."""
+        return self._service.complete(
+            prompt,
+            query_hash(prompt),
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+
+__all__ = ["DegradedModeService", "DegradedModeLLM", "query_hash"]

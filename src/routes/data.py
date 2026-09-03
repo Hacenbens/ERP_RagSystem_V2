@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 
+from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.models.upload_models import UploadResponse
 from src.infrastructure.di.factory import build_container
 from src.observability.structured_logger import get_logger
@@ -51,7 +52,7 @@ def _get_job_dispatcher(request: Request):
 async def upload_asset(
     request: Request,
     file: UploadFile = File(...),
-    chunk_strategy: str = Form(default="sop"),
+    chunk_strategy: ChunkStrategy = Form(default=ChunkStrategy.SOP),
     storage=Depends(_get_asset_storage),
     dispatcher=Depends(_get_job_dispatcher),
 ) -> UploadResponse:
@@ -73,11 +74,14 @@ async def upload_asset(
         asset_id=asset_id,
         filename=filename,
         size_bytes=size_bytes,
-        chunk_strategy=chunk_strategy,
+        chunk_strategy=chunk_strategy.value,
     )
 
     try:
-        storage.save_bytes(
+        # save_bytes returns the key that locates these bytes again. Discarding
+        # it and passing the bare asset_id to the worker made every ingest fail
+        # its tenant-prefix check and land in the dead-letter queue.
+        storage_key: str = storage.save_bytes(
             tenant_id=tenant_id,
             asset_id=asset_id,
             filename=filename,
@@ -97,7 +101,10 @@ async def upload_asset(
     job_id = dispatcher.dispatch_ingest(
         asset_id=asset_id,
         tenant_id=tenant_id,
-        chunk_strategy=chunk_strategy,
+        # .value keeps the Celery payload a plain JSON string, as
+        # task_serializer="json" requires.
+        chunk_strategy=chunk_strategy.value,
+        storage_key=storage_key,
     )
 
     logger.info(
@@ -112,7 +119,7 @@ async def upload_asset(
         job_id=job_id,
         filename=filename,
         size_bytes=size_bytes,
-        chunk_strategy=chunk_strategy,
+        chunk_strategy=chunk_strategy.value,
     )
 
 

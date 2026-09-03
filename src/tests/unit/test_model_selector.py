@@ -244,12 +244,27 @@ class TestCircuitBreakerTiming:
         assert cb.opened_at is None
 
     def test_exact_boundary_60_seconds_resets(self):
-        cb = CircuitBreaker("timing-exact", max_failures=1, open_duration_s=60.0)
-        cb.record_failure()
-        opened_at = cb.opened_at
+        """elapsed == open_duration_s must reset, exactly on the boundary.
 
+        The clock is mocked for the opening too, not only for the check.
+        This test used to read the real time.monotonic() and add 60.0 to it,
+        which is not exact: t + 60.0 rounds to the nearest representable
+        double, and when it rounds down, (t + 60.0) - t is 59.999999999985
+        and `elapsed >= 60.0` is False. Whether it rounds down depends on the
+        exact bits of t, i.e. on host uptime — so the same commit passed on
+        one CI runner and failed on another. Sampling monotonic-sized values
+        in [1e3, 1e7] finds such t within a few million draws.
+
+        Mocking both reads with small exactly-representable values makes the
+        boundary deterministic.
+        """
         with patch("src.infrastructure.generation.circuit_breaker.time.monotonic") as mock_t:
-            mock_t.return_value = opened_at + 60.0
+            mock_t.return_value = 1000.0
+            cb = CircuitBreaker("timing-exact", max_failures=1, open_duration_s=60.0)
+            cb.record_failure()
+            assert cb.opened_at == 1000.0
+
+            mock_t.return_value = 1060.0  # exactly open_duration_s later
             assert cb.is_open() is False
 
 

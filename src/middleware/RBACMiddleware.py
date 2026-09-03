@@ -38,6 +38,7 @@ from src.infrastructure.auth.erp_rbac_policy import (
     get_allowed_modules,
     is_table_allowed,
 )
+from src.middleware.public_paths import PUBLIC_PATHS
 from src.observability.prometheus_metrics import MIDDLEWARE_VIOLATIONS, RBAC_VIOLATION_RATE
 from src.observability.structured_logger import get_logger
 
@@ -70,8 +71,14 @@ class RBACMiddleware(BaseHTTPMiddleware):
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         """Check role permissions; return 403 on violation."""
-        role: str = getattr(request.state, "role", UserRole.REPORTING_ANALYST.value)
         path: str = request.url.path
+
+        # Public paths never reached AuthMiddleware's verification, so
+        # request.state carries no role to check. Skip before reading it.
+        if path in PUBLIC_PATHS:
+            return await call_next(request)
+
+        role: str = getattr(request.state, "role", UserRole.REPORTING_ANALYST.value)
 
         # ------------------------------------------------------------------
         # Guard 1 — Admin route: SUPER_ADMIN only
