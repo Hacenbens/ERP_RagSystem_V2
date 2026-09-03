@@ -1,0 +1,31 @@
+# Keep the build context small and secrets out of the image.
+#
+# .env is the important line: the image must take configuration from compose
+# or the environment, never bake a developer's real API keys into a layer.
+.env
+*.env
+
+erp-rag-env-v2/
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.git/
+.github/
+docker/volumes/
+notebooks/
+erp_rag_claude_code/
+*.md
+!README.md
+
+.vscode/
+.idea/
+.DS_Store
