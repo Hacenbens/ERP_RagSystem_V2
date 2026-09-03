@@ -60,7 +60,14 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 # Paths where request body contains user query text worth scanning
-_SCAN_PATHS: frozenset[str] = frozenset({"/api/erp/query", "/query"})
+# /api/v1/query is the live query endpoint (Sprint 7). It was missing here, so
+# mounting this middleware would have masked nothing: the two paths listed
+# before it are the pre-Sprint-7 route and a stub used in middleware tests.
+_SCAN_PATHS: frozenset[str] = frozenset({
+    "/api/v1/query",
+    "/api/erp/query",
+    "/query",
+})
 
 
 def _mask_pii(text: str) -> tuple[str, dict[str, int]]:

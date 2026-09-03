@@ -30,6 +30,9 @@ _USER_LIMIT_PER_MIN: int = 60
 _IP_LIMIT_PER_MIN: int = 200
 _WINDOW_SECONDS: int = 60
 
+# Ops endpoints exempt from throttling — see dispatch() for why.
+_UNTHROTTLED_PATHS: frozenset[str] = frozenset({"/health", "/metrics"})
+
 
 class _WindowCounter:
     """Minimal sliding-window counter (in-process, not distributed)."""
@@ -76,6 +79,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         """Check rate counters; return 429 when a limit is exceeded."""
+        # Liveness probes and the Prometheus scraper are infrastructure, not
+        # callers. They are unauthenticated, so they would all share the
+        # "anonymous" bucket and a 15-second probe interval plus a scrape would
+        # spend that budget on monitoring alone — throttling health checks and
+        # hiding the metrics that would show it. Login stays throttled: that is
+        # the endpoint worth brute-forcing.
+        if request.url.path in _UNTHROTTLED_PATHS:
+            return await call_next(request)
+
         user_id: str = getattr(request.state, "user_id", "") or (
             request.headers.get("x-user-id", "anonymous")
         )
