@@ -123,7 +123,7 @@ cp .env.example .env
 | `JWT_SECRET_KEY` | Yes | Secret used to sign JWTs — change in production |
 | `REDIS_URL` | No | Celery broker URL (default: `redis://localhost:6379/0`) |
 | `ASSET_STORAGE_PATH` | No | Local path for uploaded files (default: `/tmp/erp_rag_assets`) |
-| `MILVUS_URI` | No | Milvus server URI or `.db` path — omit for in-memory fallback |
+| `MILVUS_DB_URI` | No | Milvus server URI or Milvus Lite `.db` path — omit for in-memory fallback. Not named `MILVUS_URI`: pymilvus claims that name and rejects file paths. |
 | `MONGODB_URI` | No | MongoDB connection string — omit for in-memory fallback |
 | `NGROK_BASE_URL` | No | Ngrok-tunnelled embedding server — omit for no-op embeddings |
 | `VLLM_BASE_URL` | No | vLLM fallback endpoint |

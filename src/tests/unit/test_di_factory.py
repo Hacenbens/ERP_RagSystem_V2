@@ -156,8 +156,8 @@ class TestDIFactory:
     def test_select_vector_store_returns_in_memory_when_milvus_uri_absent(
         self, monkeypatch
     ):
-        """Without MILVUS_URI, _select_vector_store() falls back to InMemoryVectorStore."""
-        monkeypatch.delenv("MILVUS_URI", raising=False)
+        """Without MILVUS_DB_URI, _select_vector_store() falls back to InMemoryVectorStore."""
+        monkeypatch.delenv("MILVUS_DB_URI", raising=False)
         from src.infrastructure.di.factory import _select_vector_store
         from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 
@@ -167,9 +167,9 @@ class TestDIFactory:
     def test_select_vector_store_returns_milvus_when_uri_is_set(
         self, monkeypatch, tmp_path
     ):
-        """With MILVUS_URI pointing to a .db file, _select_vector_store() returns MilvusVectorStore."""
+        """With MILVUS_DB_URI pointing to a .db file, _select_vector_store() returns MilvusVectorStore."""
         db_path = str(tmp_path / "factory_test.db")
-        monkeypatch.setenv("MILVUS_URI", db_path)
+        monkeypatch.setenv("MILVUS_DB_URI", db_path)
         from src.infrastructure.di.factory import _select_vector_store
         from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
 
