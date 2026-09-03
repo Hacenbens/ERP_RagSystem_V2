@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
 
+from src.domain.user_role import UserRole
 from src.tests.conftest import build_test_app
 from src.tests.fixtures.jwt_fixtures import (
     make_expired_token,
@@ -41,42 +42,102 @@ def client(jwt_handler):
 # Happy path: register → login → use token
 # ---------------------------------------------------------------------------
 
+class TestErpRoleRegistration:
+    """Registration must accept the nine roles RBAC actually enforces.
+
+    RegisterRequest used to validate against pattern
+    ^(ADMIN|MANAGER|ANALYST|VIEWER)$ — four placeholder roles that appear
+    nowhere in erp_rbac_policy. Registering any real ERP persona returned
+    422, so no account that RBAC could authorise could be created through
+    the API at all.
+    """
+
+    @pytest.mark.parametrize("role", [r.value for r in UserRole])
+    def test_every_erp_role_can_register(self, client, role):
+        resp = client.post("/auth/register", json={
+            "username": f"user_{role.lower()}",
+            "password": "securepass1",
+            "role": role,
+            "tenant_id": "ferza",
+        })
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["role"] == role
+
+    @pytest.mark.parametrize("role", [r.value for r in UserRole])
+    def test_registered_role_survives_into_the_jwt(self, client, role):
+        """The role RBAC reads from the token must be the one registered."""
+        username = f"tok_{role.lower()}"
+        client.post("/auth/register", json={
+            "username": username,
+            "password": "securepass1",
+            "role": role,
+            "tenant_id": "ferza",
+        })
+        login = client.post("/auth/login", json={
+            "username": username,
+            "password": "securepass1",
+        })
+        assert login.status_code == 200
+        assert login.json()["role"] == role
+
+    @pytest.mark.parametrize("legacy", ["ADMIN", "MANAGER", "ANALYST", "VIEWER"])
+    def test_legacy_placeholder_roles_are_rejected(self, client, legacy):
+        """The old placeholders are not ERP roles and must not be accepted."""
+        resp = client.post("/auth/register", json={
+            "username": f"legacy_{legacy.lower()}",
+            "password": "securepass1",
+            "role": legacy,
+            "tenant_id": "ferza",
+        })
+        assert resp.status_code == 422
+
+    def test_default_role_is_a_real_erp_role(self, client):
+        """Omitting role must not produce a role RBAC cannot resolve."""
+        resp = client.post("/auth/register", json={
+            "username": "defaulted",
+            "password": "securepass1",
+            "tenant_id": "ferza",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["role"] in {r.value for r in UserRole}
+
+
 class TestRegisterAndLogin:
     def test_register_new_user_returns_201(self, client):
         resp = client.post("/auth/register", json={
             "username": "alice",
             "password": "securepass1",
-            "role": "ANALYST",
+            "role": "REPORTING_ANALYST",
             "tenant_id": "ferza",
         })
         assert resp.status_code == 201
         data = resp.json()
         assert data["username"] == "alice"
-        assert data["role"] == "ANALYST"
+        assert data["role"] == "REPORTING_ANALYST"
         assert data["tenant_id"] == "ferza"
         assert "user_id" in data
 
     def test_register_duplicate_username_returns_409(self, client):
-        payload = {"username": "bob", "password": "pass12345", "role": "VIEWER", "tenant_id": "t1"}
+        payload = {"username": "bob", "password": "pass12345", "role": "REPORTING_ANALYST", "tenant_id": "t1"}
         client.post("/auth/register", json=payload)
         resp = client.post("/auth/register", json=payload)
         assert resp.status_code == 409
 
     def test_login_returns_access_token(self, client):
         client.post("/auth/register", json={
-            "username": "charlie", "password": "pass12345", "role": "MANAGER", "tenant_id": "acme"
+            "username": "charlie", "password": "pass12345", "role": "PRODUCT_MANAGER", "tenant_id": "acme"
         })
         resp = client.post("/auth/login", json={"username": "charlie", "password": "pass12345"})
         assert resp.status_code == 200
         data = resp.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
-        assert data["role"] == "MANAGER"
+        assert data["role"] == "PRODUCT_MANAGER"
         assert data["tenant_id"] == "acme"
 
     def test_login_with_wrong_password_returns_401(self, client):
         client.post("/auth/register", json={
-            "username": "dana", "password": "correct_pass", "role": "VIEWER", "tenant_id": "t1"
+            "username": "dana", "password": "correct_pass", "role": "REPORTING_ANALYST", "tenant_id": "t1"
         })
         resp = client.post("/auth/login", json={"username": "dana", "password": "wrong_pass"})
         assert resp.status_code == 401
@@ -89,7 +150,7 @@ class TestRegisterAndLogin:
         """Happy path: register → login → GET /api/erp/query with JWT → 200."""
         # Register
         client.post("/auth/register", json={
-            "username": "eve", "password": "pass12345", "role": "ADMIN", "tenant_id": "ferza"
+            "username": "eve", "password": "pass12345", "role": "SUPER_ADMIN", "tenant_id": "ferza"
         })
         # Login
         login_resp = client.post("/auth/login", json={"username": "eve", "password": "pass12345"})
@@ -104,7 +165,7 @@ class TestRegisterAndLogin:
         assert resp.status_code == 200
         data = resp.json()
         assert data["result"] == "ok"
-        assert data["role"] == "ADMIN"
+        assert data["role"] == "SUPER_ADMIN"
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +215,7 @@ class TestAuthFailureCases:
         assert client.get("/health").status_code == 200
         assert client.post("/auth/login", json={"username": "x", "password": "y"}).status_code in (200, 401)
         assert client.post("/auth/register", json={
-            "username": "pub_test", "password": "pass12345", "role": "VIEWER", "tenant_id": "t"
+            "username": "pub_test", "password": "pass12345", "role": "REPORTING_ANALYST", "tenant_id": "t"
         }).status_code == 201
 
 
@@ -165,7 +226,7 @@ class TestAuthFailureCases:
 class TestPasswordResetFlow:
     def test_request_reset_token_for_existing_user(self, client):
         client.post("/auth/register", json={
-            "username": "frank", "password": "oldpass1", "role": "VIEWER", "tenant_id": "t"
+            "username": "frank", "password": "oldpass1", "role": "REPORTING_ANALYST", "tenant_id": "t"
         })
         resp = client.post("/auth/request-password-reset", json={"username": "frank"})
         assert resp.status_code == 200
@@ -179,7 +240,7 @@ class TestPasswordResetFlow:
 
     def test_reset_password_with_valid_token(self, client):
         client.post("/auth/register", json={
-            "username": "grace", "password": "oldpass1", "role": "VIEWER", "tenant_id": "t"
+            "username": "grace", "password": "oldpass1", "role": "REPORTING_ANALYST", "tenant_id": "t"
         })
         reset_resp = client.post("/auth/request-password-reset", json={"username": "grace"})
         reset_token = reset_resp.json()["reset_token"]
@@ -203,7 +264,7 @@ class TestPasswordResetFlow:
 
     def test_old_password_rejected_after_reset(self, client):
         client.post("/auth/register", json={
-            "username": "henry", "password": "oldpass1", "role": "VIEWER", "tenant_id": "t"
+            "username": "henry", "password": "oldpass1", "role": "REPORTING_ANALYST", "tenant_id": "t"
         })
         reset_resp = client.post("/auth/request-password-reset", json={"username": "henry"})
         reset_token = reset_resp.json()["reset_token"]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 
+from src.domain.user_role import UserRole
 from src.infrastructure.auth.jwt_handler import JWTHandler
 from src.infrastructure.auth.user_repository import (
     InMemoryUserRepository,
@@ -58,7 +59,7 @@ class AuthUseCase:
         self,
         username: str,
         password: str,
-        role: str = "VIEWER",
+        role: str = UserRole.REPORTING_ANALYST.value,
         tenant_id: str = "default",
     ) -> RegisterResult:
         """Register a new user. Raises UserAlreadyExistsError if username taken."""
