@@ -36,6 +36,26 @@ ERP_PG_DATABASE: str = _env("ERP_PG_DATABASE", "erp_prod")
 ERP_PG_USER: str = _env("ERP_PG_USER", "erp_readonly")
 ERP_PG_PASSWORD: str = _env("ERP_PG_PASSWORD", "")
 
+
+def erp_pg_dsn() -> str:
+    """Return the ERP PostgreSQL DSN, or "" when no database is configured.
+
+    QueryExecutor used to read an ERP_PG_DSN environment variable that is set
+    nowhere — not in .env, .env.example, docker-compose, or CI. Only the
+    ERP_PG_* parts exist, and nothing assembled them, so the executor always
+    fell through to InMemoryExecutor and answered with synthetic rows.
+
+    A password is required: connecting to the real ERP as the read-only user
+    without one is not something to attempt implicitly. Absent it, callers
+    get "" and must present their results as synthetic.
+    """
+    if not ERP_PG_PASSWORD:
+        return ""
+    return (
+        f"postgresql://{ERP_PG_USER}:{ERP_PG_PASSWORD}"
+        f"@{ERP_PG_HOST}:{ERP_PG_PORT}/{ERP_PG_DATABASE}"
+    )
+
 # ---------------------------------------------------------------------------
 # LLM / Embedding
 # ---------------------------------------------------------------------------

@@ -75,6 +75,8 @@ class SQLAgent(BaseAgent):
             row_count=execution.row_count,
             latency_ms=execution.latency_ms,
             query_id=execution.query_id,
+            executor=execution.executor,
+            synthetic=execution.synthetic,
         )
 
         logger.info(
