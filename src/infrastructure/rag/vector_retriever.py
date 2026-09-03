@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from src.domain.exceptions import EmbeddingUnavailableError
 from src.domain.models.scored_chunk import ScoredChunk
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.vector_store_port import VectorStorePort
@@ -23,14 +24,29 @@ class VectorRetriever:
         tenant_id: str,
         erp_module: str | None = None,
     ) -> list[ScoredChunk]:
-        """Embed the query and return the top-k most similar chunks."""
+        """Embed the query and return the top-k most similar chunks.
+
+        Returns an empty list when embedding is unavailable. The RAG branch
+        then produces an ungrounded answer, and HybridAgent still has its SQL
+        half — whereas an exception here reached the route as a 500 on every
+        RAG query, which is what a dead embedding tunnel actually did.
+        """
         logger.info(
             "rag.retriever.start",
             tenant_id=tenant_id,
             erp_module=erp_module,
             k=k,
         )
-        embedding = self._embedder.embed(query)
+        try:
+            embedding = self._embedder.embed(query)
+        except EmbeddingUnavailableError as exc:
+            logger.error(
+                "rag.retriever.embedding_unavailable",
+                tenant_id=tenant_id,
+                erp_module=erp_module,
+                error=str(exc),
+            )
+            return []
         chunks = self._store.search_similar(
             query_embedding=embedding,
             k=k,

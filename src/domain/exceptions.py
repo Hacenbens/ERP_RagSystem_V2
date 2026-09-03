@@ -18,6 +18,15 @@ class LLMUnavailableError(ERPRagError):
     """
 
 
+class EmbeddingUnavailableError(ERPRagError):
+    """Raised when no embedding vector can be produced for a text.
+
+    Covers both a remote embedding service that is down and the absence of
+    any configured provider. VectorRetriever catches it and returns no
+    chunks, so retrieval degrades to an ungrounded answer instead of a 500.
+    """
+
+
 class InvalidIntentError(ERPRagError):
     """Raised when the classifier returns an unrecognised intent label."""
 
@@ -26,5 +35,6 @@ __all__ = [
     "ERPRagError",
     "TenantFilterMissingError",
     "LLMUnavailableError",
+    "EmbeddingUnavailableError",
     "InvalidIntentError",
 ]

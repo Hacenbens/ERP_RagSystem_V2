@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from src.domain.exceptions import EmbeddingUnavailableError
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.observability.structured_logger import get_logger
 
@@ -23,30 +24,50 @@ class NgrokEmbeddingProvider(EmbeddingPort):
         timeout_s: float = 30.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._base_url = (base_url or os.environ.get("NGROK_BASE_URL", "")).rstrip("/")
-        self._endpoint = endpoint or os.environ.get("NGROK_EMBEDDING_ENDPOINT", "/embed")
-        self._model = model or os.environ.get("NGROK_EMBEDDING_MODEL", "")
-        self._api_key = api_key or os.environ.get("NGROK_API_KEY", "")
+        # `is None` rather than `or`: an explicitly-passed "" means "no base
+        # URL", but `or` treated it as unset and silently read the ambient
+        # environment. A unit test that constructed the provider with
+        # base_url="" to assert the misconfiguration path therefore picked up
+        # the developer's real .env and made a live HTTPS call.
+        self._base_url = (
+            os.environ.get("NGROK_BASE_URL", "") if base_url is None else base_url
+        ).rstrip("/")
+        self._endpoint = (
+            os.environ.get("NGROK_EMBEDDING_ENDPOINT", "/embed") if endpoint is None else endpoint
+        )
+        self._model = os.environ.get("NGROK_EMBEDDING_MODEL", "") if model is None else model
+        self._api_key = os.environ.get("NGROK_API_KEY", "") if api_key is None else api_key
         self._timeout_s = timeout_s
         self._transport = transport
 
     def embed(self, text: str) -> list[float]:
         """Return an embedding vector for *text* from the remote ngrok service."""
         if not self._base_url:
-            raise RuntimeError("NGROK_BASE_URL is not configured for embeddings")
+            raise EmbeddingUnavailableError(
+                "NGROK_BASE_URL is not configured for embeddings"
+            )
 
         payload: dict[str, Any] = {"texts": [text]}
         if self._model:
             payload["model"] = self._model
 
-        with httpx.Client(
-            base_url=self._base_url,
-            timeout=self._timeout_s,
-            transport=self._transport,
-        ) as client:
-            response = client.post(self._endpoint, json=payload, headers=self._headers())
-            response.raise_for_status()
-            data = response.json()
+        # Transport and HTTP errors become EmbeddingUnavailableError so the
+        # retriever can degrade. Unwrapped, an httpx.HTTPStatusError from a
+        # dead tunnel travelled through VectorRetriever and RAGAgent
+        # uncaught and surfaced as a 500 on every RAG query.
+        try:
+            with httpx.Client(
+                base_url=self._base_url,
+                timeout=self._timeout_s,
+                transport=self._transport,
+            ) as client:
+                response = client.post(self._endpoint, json=payload, headers=self._headers())
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPError as exc:
+            raise EmbeddingUnavailableError(
+                f"Embedding service at {self._base_url} failed: {exc}"
+            ) from exc
 
         embedding = self._parse_embedding(data)
         logger.info(
@@ -77,12 +98,22 @@ class NgrokEmbeddingProvider(EmbeddingPort):
 
 
 class NoopEmbeddingProvider(EmbeddingPort):
-    """Fallback test provider that returns a fixed-size zero vector."""
+    """Placeholder used when no embedding provider is configured.
+
+    It refuses rather than returning a zero vector. A zero vector has no
+    direction, so cosine similarity against it is 0.0 for every stored chunk:
+    retrieval returns an arbitrary k documents, the reranker faithfully
+    orders meaningless scores, and the LLM cites them. That is worse than an
+    outage, because it looks like a working answer.
+    """
 
     def embed(self, text: str) -> list[float]:
-        """Return a deterministic zero vector without calling any external model."""
+        """Always raise — there is no provider to embed with."""
         del text
-        return [0.0] * 768
+        raise EmbeddingUnavailableError(
+            "No embedding provider configured — set NGROK_BASE_URL. "
+            "Retrieval is unavailable; answers cannot be grounded."
+        )
 
 
 __all__ = ["NgrokEmbeddingProvider", "NoopEmbeddingProvider"]
