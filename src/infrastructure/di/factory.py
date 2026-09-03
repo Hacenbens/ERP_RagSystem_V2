@@ -268,6 +268,44 @@ def build_container() -> DIContainer:
     return container
 
 
+class MongoUnavailableError(RuntimeError):
+    """Raised when MONGODB_URI is set but the server cannot be reached."""
+
+
+def _connect_mongo(mongo_uri: str) -> "Any":
+    """Return a MongoClient, having proved the server answers.
+
+    pymongo connects lazily, so MongoClient(uri) succeeds against a wrong
+    host, a wrong port and wrong credentials alike. The worker container
+    therefore built cleanly and every task failed later at runtime — with
+    `OperationFailure: Command delete requires authentication` for an
+    uncredentialed URI — which is the opposite of the fail-fast the DI
+    container exists to provide.
+
+    The probe reads the erp_rag database rather than pinging admin. A ping
+    answers without authentication on a server that then rejects every real
+    operation, so it would have reported this exact misconfiguration as
+    healthy. listCollections needs the same authentication the worker's reads
+    and writes need, which is what has to be proven here.
+    """
+    import pymongo  # type: ignore
+    from pymongo.errors import PyMongoError  # type: ignore
+
+    client: Any = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5_000)
+    try:
+        client["erp_rag"].list_collection_names()
+    except PyMongoError as exc:
+        raise MongoUnavailableError(
+            f"MONGODB_URI is set but the server did not answer: {exc}. "
+            "Check the host, and include credentials if the server requires "
+            "auth (mongodb://user:password@host:27017/?authSource=admin). "
+            "Leave MONGODB_URI blank to run with in-memory stores."
+        ) from exc
+
+    logger.info("factory.mongo.connected", database="erp_rag")
+    return client
+
+
 def build_worker_container() -> DIContainer:
     """Create and validate a DI container for the Celery worker process.
 
@@ -300,8 +338,7 @@ def build_worker_container() -> DIContainer:
     chunk_store: InMemoryChunkStore | MongoChunkStore
 
     if mongo_uri:
-        import pymongo  # type: ignore
-        client: Any = pymongo.MongoClient(mongo_uri)
+        client: Any = _connect_mongo(mongo_uri)
         dead_letter_repo = MongoDeadLetterRepository(
             client["erp_rag"]["failed_tasks"]
         )
@@ -376,4 +413,9 @@ def get_worker_container() -> DIContainer:
     return _worker_container
 
 
-__all__ = ["build_container", "build_worker_container", "get_worker_container"]
+__all__ = [
+    "build_container",
+    "build_worker_container",
+    "get_worker_container",
+    "MongoUnavailableError",
+]
