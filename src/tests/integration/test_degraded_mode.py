@@ -83,7 +83,18 @@ class TestHappyPath:
         mock_selector = _make_selector("ok")
         svc = DegradedModeService(mock_selector)
         svc.complete("my prompt", "hash-003")
-        mock_selector.complete.assert_called_once_with("my prompt")
+        mock_selector.complete.assert_called_once_with("my prompt", 0.0, 512)
+
+    def test_generation_parameters_reach_the_selector(self):
+        """temperature and max_tokens used to be dropped on the floor.
+
+        Every prompt reached the provider at the selector's defaults,
+        discarding the per-prompt values PromptRegistry resolves.
+        """
+        mock_selector = _make_selector("ok")
+        svc = DegradedModeService(mock_selector)
+        svc.complete("p", "h", temperature=0.7, max_tokens=2048)
+        mock_selector.complete.assert_called_once_with("p", 0.7, 2048)
 
     def test_multiple_calls_cache_independently(self):
         mock_selector = MagicMock(spec=ModelSelector)
