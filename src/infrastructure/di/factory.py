@@ -26,7 +26,7 @@ from src.infrastructure.di.container import DIContainer
 from src.infrastructure.persistence.chunk_store import InMemoryChunkStore, MongoChunkStore
 from src.infrastructure.rag.context_builder import ContextBuilder
 from src.infrastructure.rag.embedding_providers import NgrokEmbeddingProvider, NoopEmbeddingProvider
-from src.infrastructure.rag.reranker import IdentityReranker
+from src.infrastructure.rag.reranker import CrossEncoderReranker, IdentityReranker
 from src.infrastructure.rag.vector_retriever import VectorRetriever
 from src.infrastructure.storage.local_asset_storage import LocalAssetStorage
 from src.infrastructure.workers.celery_job_dispatcher import CeleryJobDispatcher
@@ -131,6 +131,29 @@ def _select_embedder() -> EmbeddingPort:
     return NoopEmbeddingProvider()
 
 
+def _select_reranker() -> "IdentityReranker | CrossEncoderReranker":
+    """Return CrossEncoderReranker when a reranking service is configured.
+
+    IdentityReranker was hardcoded, so CrossEncoderReranker shipped written and
+    tested and was never constructed. Identity only re-sorts by the score the
+    vector store already returned, which makes the rerank stage a no-op: the
+    top-5 handed to the LLM are whichever five cosine similarity liked, with no
+    query-document interaction scoring at all.
+
+    Selecting the cross-encoder is safe even when the endpoint is flaky: it
+    falls back to IdentityReranker per call on any scoring failure, so a
+    reranker outage degrades ordering rather than the request.
+    """
+    if os.environ.get("NGROK_BASE_URL"):
+        logger.info("factory.reranker.cross_encoder_enabled")
+        return CrossEncoderReranker()
+    logger.warning(
+        "factory.reranker.identity — set NGROK_BASE_URL to enable cross-encoder "
+        "reranking; ordering is cosine similarity alone"
+    )
+    return IdentityReranker()
+
+
 def _select_vector_store(dim: int = 768) -> VectorStorePort:
     """Return MilvusVectorStore when MILVUS_DB_URI is set, else InMemoryVectorStore.
 
@@ -193,7 +216,7 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     vector_store = _select_vector_store()
     embedder = _select_embedder()
     retriever = VectorRetriever(store=vector_store, embedder=embedder)
-    reranker = IdentityReranker()
+    reranker = _select_reranker()
     context_builder = ContextBuilder()
 
     container.register("vector_store", vector_store)
