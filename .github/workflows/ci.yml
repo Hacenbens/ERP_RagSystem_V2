@@ -2,9 +2,22 @@ name: CI
 
 on:
   push:
-    branches: [develop, "sprint-*/"]
+    # "sprint-*/" never matched anything: a branch glob's * does not cross "/",
+    # and the trailing slash is not a valid pattern. Sprint branches ran no CI.
+    branches:
+      - develop
+      - main
+      - "sprint-*/**"
+      - "feat/**"
+      - "fix/**"
+      - "chore/**"
   pull_request:
-    branches: [develop]
+    # PRs into a sprint integration branch are the normal review unit here,
+    # so they have to be gated too — not just PRs that target develop.
+    branches:
+      - develop
+      - main
+      - "sprint-*/**"
 
 env:
   PYTHON_VERSION: "3.13"
@@ -42,7 +55,7 @@ jobs:
         run: mypy src/ evaluation/ helpers/ --ignore-missing-imports
 
   unit-tests:
-    name: Unit tests
+    name: Unit & integration tests
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -57,9 +70,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run unit tests with coverage
+      # Integration tests run in-memory (Celery eager mode, in-memory stores)
+      # and need no services. Running unit tests alone measured 70% coverage
+      # against an 80% floor, so this gate could never pass; together they
+      # measure 95% and, more importantly, actually exercise the routes and
+      # middleware where this sprint's regressions were found.
+      - name: Run unit and integration tests with coverage
         run: |
-          pytest src/tests/unit/ -v \
+          pytest src/tests/unit/ src/tests/integration/ -v \
             --cov=src \
             --cov=evaluation \
             --cov=helpers \
