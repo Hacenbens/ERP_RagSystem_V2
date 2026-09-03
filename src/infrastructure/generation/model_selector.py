@@ -5,7 +5,7 @@ single ``complete()`` entry point.  For each call it:
 
 1. Skips any provider whose ``CircuitBreaker`` is open.
 2. Delegates to the first available provider.
-3. On ``ConnectionError``: records the failure in the breaker and tries next.
+3. On ANY exception: records the failure in the breaker and tries the next.
 4. On success: records success in the breaker and returns the answer.
 5. When all providers are exhausted: raises ``LLMUnavailableError``.
 
@@ -110,12 +110,21 @@ class ModelSelector(LLMPort):
                 )
                 return answer
 
-            except ConnectionError as exc:
+            # Deliberately broad. This used to catch ConnectionError only,
+            # which meant the failure modes most likely in production never
+            # reached the fallback: a retired or renamed model, a revoked or
+            # over-quota key, and a 429 all surface as provider-SDK errors or
+            # 4xx, not as ConnectionError. Those bypassed the next provider,
+            # left the circuit closed, never reached degraded mode, and
+            # arrived at the caller as an unhandled 500. Any failure to
+            # produce a completion is a reason to try the next provider.
+            except Exception as exc:
                 last_exc = exc
                 breaker.record_failure()
                 logger.error(
                     "model_selector.provider_failed",
                     provider=breaker.provider_name,
+                    error_type=type(exc).__name__,
                     error=str(exc),
                 )
 

@@ -1,8 +1,14 @@
 """GeminiLLMClient — LLMPort implementation backed by Google Gemini API.
 
-Uses ``google-genai`` (the current SDK) with the ``gemini-2.5-flash-lite``
-model on the free tier.  API key is read from the ``GEMINI_API_KEY``
-environment variable (or passed directly to the constructor for DI).
+Uses ``google-genai`` (the current SDK).  API key is read from the
+``GEMINI_API_KEY`` environment variable (or passed directly to the
+constructor for DI); the model comes from ``GEMINI_MODEL``.
+
+Google retires model ids. ``gemini-2.5-flash-lite`` — the previous default —
+now returns 404 "no longer available to new users", which is a client error
+rather than a transport failure, so pin a current id and keep
+``GEMINI_MODEL`` in .env pointing at one. ``gemini-flash-lite-latest`` is
+the moving alias if you would rather not pin.
 
 Raises ``ConnectionError`` on transport failures and non-2xx HTTP errors so
 that ``ModelSelector`` can apply its circuit-breaker policy uniformly.
@@ -20,8 +26,7 @@ from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
-# Default free-tier Gemini 2.5 Flash-Lite model identifier
-_DEFAULT_MODEL = "gemini-2.5-flash-lite"
+_DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 
 class GeminiLLMClient(LLMPort):

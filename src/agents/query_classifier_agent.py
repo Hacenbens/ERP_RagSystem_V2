@@ -6,8 +6,12 @@ returned JSON into a ``RoutingDecision``.
 
 Error contract:
   - ``ValueError``  — LLM returned non-JSON or JSON that fails the schema.
-  - Any ``LLMUnavailableError`` from the LLM bubbles up unchanged so the
-    caller can activate degraded mode.
+  - An LLM outage does NOT propagate. Classification is the first LLM call
+    in every request, so an exception here fails the request outright before
+    any agent runs. Instead the classifier degrades to HYBRID at the
+    low-confidence threshold, which routes through RAG and SQL together —
+    the same safe default RouteQueryUseCase already applies whenever the
+    model is unsure.
 """
 from __future__ import annotations
 
@@ -66,11 +70,19 @@ class QueryClassifierAgent(QueryClassifierPort):
         prompt_version = self._registry.resolve("classifier", "production")
         prompt = self._build_prompt(prompt_version.prompt_text, query, erp_module)
 
-        raw = self._llm.complete(
-            prompt,
-            temperature=prompt_version.parameters.temperature,
-            max_tokens=prompt_version.parameters.max_tokens,
-        )
+        try:
+            raw = self._llm.complete(
+                prompt,
+                temperature=prompt_version.parameters.temperature,
+                max_tokens=prompt_version.parameters.max_tokens,
+            )
+        except Exception as exc:
+            logger.error(
+                "classifier.llm_unavailable",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return self._hybrid_fallback(erp_module, reason=type(exc).__name__)
 
         parsed = self._parse_and_validate(raw, prompt_version)
 
@@ -96,6 +108,22 @@ class QueryClassifierAgent(QueryClassifierPort):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _hybrid_fallback(self, erp_module: str | None, reason: str) -> RoutingDecision:
+        """Route to HYBRID when the classifier LLM cannot answer.
+
+        Confidence is set to the low-confidence threshold, not to 0.0:
+        RouteQueryUseCase blocks anything below 0.50 outright, and a provider
+        outage is not a reason to reject the user's query. At exactly 0.50 it
+        takes the low-confidence HYBRID branch, running RAG and SQL in
+        parallel and returning whichever succeeds.
+        """
+        return RoutingDecision(
+            intent=QueryIntent.HYBRID,
+            confidence=0.50,
+            erp_module=self._resolve_module(erp_module),
+            reason=f"Classifier LLM unavailable ({reason}) — defaulting to HYBRID.",
+        )
 
     @staticmethod
     def _build_prompt(
