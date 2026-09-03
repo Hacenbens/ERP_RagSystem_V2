@@ -58,6 +58,7 @@ class IngestAssetUseCase:
         tenant_id: str,
         chunk_strategy: str,
         task_id: str,
+        storage_key: str,
     ) -> IngestResult:
         """Run the ingestion pipeline.
 
@@ -87,8 +88,10 @@ class IngestAssetUseCase:
 
         t0 = time.perf_counter()
 
-        # Stage 1 — load bytes (raises FileNotFoundError if missing)
-        content: bytes = self._asset_storage.read_bytes(tenant_id, asset_id)
+        # Stage 1 — load bytes (raises FileNotFoundError if missing).
+        # Keyed by storage_key, not asset_id: the key is what save_bytes
+        # returned and the only handle the storage port can resolve.
+        content: bytes = self._asset_storage.read_bytes(tenant_id, storage_key)
 
         # Stage 2 — chunk (raises on failure; chunk_store never touched)
         chunks: list[Chunk] = self._chunker(content, chunk_strategy)

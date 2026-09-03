@@ -65,6 +65,7 @@ class _JobDispatcherStub(JobDispatcherPort):
         asset_id: str,
         tenant_id: str,
         chunk_strategy: str,
+        storage_key: str = "t/a/doc.txt",
     ) -> str:
         self.calls.append(("ingest", asset_id, tenant_id, chunk_strategy))
         return "task-ingest-1"

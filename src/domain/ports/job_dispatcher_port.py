@@ -18,8 +18,15 @@ class JobDispatcherPort(ABC):
         asset_id: str,
         tenant_id: str,
         chunk_strategy: str,
+        storage_key: str,
     ) -> str:
-        """Dispatch an ingest job and return the queued task identifier."""
+        """Dispatch an ingest job and return the queued task identifier.
+
+        ``storage_key`` is what AssetStoragePort.save_bytes returned. The
+        worker cannot reconstruct it from asset_id: the key carries the
+        filename, and for an object store it is the only handle that locates
+        the object without a listing call.
+        """
 
     @abstractmethod
     def dispatch_embed(

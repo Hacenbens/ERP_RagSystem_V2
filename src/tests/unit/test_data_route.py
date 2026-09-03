@@ -47,9 +47,11 @@ class _StubDispatcher(JobDispatcherPort):
     def __init__(self) -> None:
         self.dispatched: list[dict] = []
 
-    def dispatch_ingest(self, asset_id: str, tenant_id: str, chunk_strategy: str) -> str:
+    def dispatch_ingest(self, asset_id: str, tenant_id: str, chunk_strategy: str,
+                        storage_key: str) -> str:
         self.dispatched.append({"asset_id": asset_id, "tenant_id": tenant_id,
-                                "chunk_strategy": chunk_strategy})
+                                "chunk_strategy": chunk_strategy,
+                                "storage_key": storage_key})
         return self.JOB_ID
 
     def dispatch_embed(self, asset_id: str, tenant_id: str, chunk_strategy: str) -> str:
@@ -147,16 +149,37 @@ class TestUploadAsset:
             "/api/assets/upload",
             files={"file": ("doc.txt", b"x", "text/plain")},
         )
-        assert resp.json()["chunk_strategy"] == "sop"
+        assert resp.json()["chunk_strategy"] == "SOP"
 
     def test_happy_path_custom_chunk_strategy_propagated(self):
         client, _, _ = self._client()
         resp = client.post(
             "/api/assets/upload",
             files={"file": ("doc.txt", b"x", "text/plain")},
+            data={"chunk_strategy": "tax"},
+        )
+        assert resp.json()["chunk_strategy"] == "TAX"
+
+    def test_lowercase_strategy_is_accepted_and_canonicalised(self):
+        """The route default was "sop" while every enum member is uppercase."""
+        client, _, dispatcher = self._client()
+        client.post(
+            "/api/assets/upload",
+            files={"file": ("doc.txt", b"x", "text/plain")},
+            data={"chunk_strategy": "bpmn"},
+        )
+        assert dispatcher.dispatched[0]["chunk_strategy"] == "BPMN"
+
+    def test_unknown_strategy_is_rejected_at_the_edge(self):
+        """It used to reach the worker and die there, three retries later."""
+        client, _, dispatcher = self._client()
+        resp = client.post(
+            "/api/assets/upload",
+            files={"file": ("doc.txt", b"x", "text/plain")},
             data={"chunk_strategy": "paragraph"},
         )
-        assert resp.json()["chunk_strategy"] == "paragraph"
+        assert resp.status_code == 422
+        assert dispatcher.dispatched == []
 
     def test_happy_path_storage_called_with_tenant_and_filename(self):
         client, storage, _ = self._client()
@@ -179,7 +202,7 @@ class TestUploadAsset:
         )
         assert len(dispatcher.dispatched) == 1
         assert dispatcher.dispatched[0]["tenant_id"] == TENANT_ID
-        assert dispatcher.dispatched[0]["chunk_strategy"] == "sop"
+        assert dispatcher.dispatched[0]["chunk_strategy"] == "SOP"
 
     def test_happy_path_dispatcher_asset_id_matches_response(self):
         client, _, dispatcher = self._client()

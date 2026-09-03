@@ -21,5 +21,18 @@ class ChunkStrategy(str, Enum):
     TAX       = "TAX"        # Algerian tax circulars (DGI) → tax_circular_chunker.py
     SOP       = "SOP"        # Standard Operating Procedures → sop_chunker.py
 
+    @classmethod
+    def _missing_(cls, value: object) -> "ChunkStrategy | None":
+        """Resolve a strategy name case-insensitively.
+
+        The upload route defaulted to "sop" while every member is uppercase,
+        so ChunkStrategy("sop") raised ValueError inside the Celery worker and
+        every upload taking the default retried three times into the
+        dead-letter queue. Callers should not have to know the casing.
+        """
+        if isinstance(value, str):
+            return cls.__members__.get(value.upper())
+        return None
+
 
 __all__ = ["ChunkStrategy"]

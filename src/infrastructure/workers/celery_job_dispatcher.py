@@ -25,10 +25,16 @@ class CeleryJobDispatcher(JobDispatcherPort):
     def __init__(self, _task_factory: dict[str, Any] | None = None) -> None:
         self._factory = _task_factory
 
-    def dispatch_ingest(self, asset_id: str, tenant_id: str, chunk_strategy: str) -> str:
+    def dispatch_ingest(
+        self,
+        asset_id: str,
+        tenant_id: str,
+        chunk_strategy: str,
+        storage_key: str,
+    ) -> str:
         """Dispatch an ingest_asset Celery task and return its task id."""
         task = self._get_task("ingest_asset")
-        result = task.delay(asset_id, tenant_id, chunk_strategy)
+        result = task.delay(asset_id, tenant_id, chunk_strategy, storage_key)
         return result.id
 
     def dispatch_embed(self, asset_id: str, tenant_id: str, chunk_strategy: str) -> str:
