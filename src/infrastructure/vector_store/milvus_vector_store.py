@@ -12,6 +12,24 @@ The collection is created automatically on first use with:
   - Explicit schema: chunk_id, asset_id, tenant_id, erp_module, content, embedding
 
 Tenant isolation is enforced at query time via a Milvus filter expression.
+
+Two collections are used:
+
+  erp_rag_chunks        one row per embedded chunk (the searchable vectors)
+  erp_rag_embed_state   one row per (asset_id, tenant_id) recording that the
+                        asset finished embedding, and how many vectors it
+                        produced
+
+The second exists because idempotency has to survive the process. It was an
+in-process dict, so has_vectors() answered False for an asset whose vectors
+were sitting in the database: the API could not see what the worker had
+embedded, and a restarted worker re-embedded everything.
+
+Deriving the answer by counting chunk rows would be simpler but wrong. A run
+that dies half way leaves rows behind, so count > 0 would report the asset as
+done and EmbedAssetUseCase would skip it forever, stranding it half embedded.
+The marker is written only after the last chunk lands, so it means finished,
+not started.
 """
 from __future__ import annotations
 
@@ -26,6 +44,7 @@ from src.observability.structured_logger import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_COLLECTION = "erp_rag_chunks"
+_STATE_SUFFIX = "_embed_state"
 _CONTENT_MAX_LEN = 32_000  # Milvus VARCHAR practical limit for chunk text
 
 
@@ -46,12 +65,11 @@ class MilvusVectorStore(VectorStorePort):
     ) -> None:
         self._uri = uri
         self._collection = collection_name
+        self._state_collection = f"{collection_name}{_STATE_SUFFIX}"
         self._dim = dim
         self._client = MilvusClient(uri)
-        # Lightweight in-process metadata: (asset_id, tenant_id) → vector_count.
-        # Survives restarts only when backed by a persistent URI (.db or server).
-        self._metadata: dict[tuple[str, str], int] = {}
         self._ensure_collection()
+        self._ensure_state_collection()
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -90,6 +108,43 @@ class MilvusVectorStore(VectorStorePort):
             uri=self._uri,
         )
 
+    def _ensure_state_collection(self) -> None:
+        """Create the embed-state collection if it does not already exist.
+
+        Milvus requires every collection to declare a vector field, and rejects
+        a dimension below 2, so this one carries a 2-dimension placeholder that
+        is never searched. The rows are addressed by filter only.
+        """
+        if self._client.has_collection(self._state_collection):
+            return
+
+        schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=False)
+        schema.add_field("id", DataType.INT64, is_primary=True)
+        schema.add_field("asset_id", DataType.VARCHAR, max_length=256)
+        schema.add_field("tenant_id", DataType.VARCHAR, max_length=256)
+        schema.add_field("vector_count", DataType.INT64)
+        schema.add_field("placeholder", DataType.FLOAT_VECTOR, dim=2)
+
+        index_params = self._client.prepare_index_params()
+        index_params.add_index(
+            field_name="placeholder",
+            index_type="FLAT",
+            metric_type="COSINE",
+        )
+        self._client.create_collection(
+            self._state_collection,
+            schema=schema,
+            index_params=index_params,
+        )
+        logger.info(
+            "milvus_vector_store.state_collection_created",
+            collection=self._state_collection,
+        )
+
+    def _asset_filter(self, asset_id: str, tenant_id: str) -> str:
+        """Filter expression addressing one asset within one tenant."""
+        return f'asset_id == "{asset_id}" and tenant_id == "{tenant_id}"'
+
     def _build_filter(self, tenant_id: str, erp_module: str | None) -> str:
         """Compose a Milvus filter expression from tenant_id and optional erp_module."""
         filt = f'tenant_id == "{tenant_id}"'
@@ -102,22 +157,48 @@ class MilvusVectorStore(VectorStorePort):
     # ------------------------------------------------------------------
 
     def has_vectors(self, asset_id: str, tenant_id: str) -> bool:
-        """Return True if vectors were previously saved for this asset."""
-        return self._metadata.get((asset_id, tenant_id), 0) > 0
+        """Return True if this asset finished embedding, in any process.
+
+        Reads the durable marker, so a worker restart or a second process sees
+        the same answer.
+        """
+        return self.count(asset_id, tenant_id) > 0
 
     def save_vectors(self, asset_id: str, tenant_id: str, vector_count: int) -> None:
-        """Record the vector count for the given asset."""
-        self._metadata[(asset_id, tenant_id)] = vector_count
+        """Mark the asset finished and record how many vectors it produced.
+
+        Replaces any previous marker so a re-embed does not accumulate rows.
+        """
+        self._client.delete(
+            self._state_collection,
+            filter=self._asset_filter(asset_id, tenant_id),
+        )
+        self._client.insert(
+            self._state_collection,
+            data=[{
+                "asset_id": asset_id,
+                "tenant_id": tenant_id,
+                "vector_count": vector_count,
+                "placeholder": [0.0, 0.0],
+            }],
+        )
         logger.debug(
-            "milvus_vector_store.metadata_saved",
+            "milvus_vector_store.embed_state_saved",
             asset_id=asset_id,
             tenant_id=tenant_id,
             vector_count=vector_count,
         )
 
     def count(self, asset_id: str, tenant_id: str) -> int:
-        """Return stored vector count, or 0 if asset has never been embedded."""
-        return self._metadata.get((asset_id, tenant_id), 0)
+        """Return the recorded vector count, or 0 if never finished embedding."""
+        rows = self._client.query(
+            self._state_collection,
+            filter=self._asset_filter(asset_id, tenant_id),
+            output_fields=["vector_count"],
+        )
+        if not rows:
+            return 0
+        return int(rows[0]["vector_count"])
 
     # ------------------------------------------------------------------
     # VectorStorePort — vector operations
@@ -223,9 +304,9 @@ class MilvusVectorStore(VectorStorePort):
     # ------------------------------------------------------------------
 
     def drop(self) -> None:
-        """Drop the collection and clear metadata. Use in tests only."""
+        """Drop both collections. Use in tests only."""
         self._client.drop_collection(self._collection)
-        self._metadata.clear()
+        self._client.drop_collection(self._state_collection)
         logger.info("milvus_vector_store.collection_dropped", collection=self._collection)
 
 

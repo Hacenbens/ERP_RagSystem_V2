@@ -128,13 +128,20 @@ def _select_embedder() -> EmbeddingPort:
 
 
 def _select_vector_store(dim: int = 768) -> VectorStorePort:
-    """Return MilvusVectorStore when MILVUS_URI is set, else InMemoryVectorStore."""
-    uri = os.environ.get("MILVUS_URI", "")
+    """Return MilvusVectorStore when MILVUS_DB_URI is set, else InMemoryVectorStore.
+
+    Deliberately not MILVUS_URI: pymilvus reads a variable of that exact name
+    at import time and requires an http[s]:// address, so setting it to the
+    Milvus Lite file path the project documents killed the process with
+    ConnectionConfigException before any project code ran. Renaming ours ends
+    the collision.
+    """
+    uri = os.environ.get("MILVUS_DB_URI", "")
     if uri:
         logger.info("factory.vector_store.milvus_enabled", uri=uri)
         return MilvusVectorStore(uri=uri, dim=dim)
     logger.warning(
-        "factory.vector_store.in_memory — set MILVUS_URI for persistent vector search"
+        "factory.vector_store.in_memory — set MILVUS_DB_URI for persistent vector search"
     )
     return InMemoryVectorStore()
 
