@@ -25,6 +25,9 @@ redis==6.4.0                # broker + result backend
 pydantic==2.12.5
 pydantic_core==2.41.5
 annotated-types==0.7.0
+jsonschema==4.26.0          # PromptRegistry validates LLM output against JSON schemas
+jsonschema-specifications==2025.9.1
+python-multipart==0.0.26    # required by POST /api/assets/upload (multipart form)
 
 # ── Auth ─────────────────────────────────────────────────────
 PyJWT==2.12.1
@@ -34,6 +37,12 @@ cryptography==46.0.7
 
 # ── Observability ────────────────────────────────────────────
 prometheus_client==0.24.1
+
+# ── LLM providers ────────────────────────────────────────────
+google-genai==1.73.1        # GeminiLLMClient (primary LLM since Sprint 8)
+
+# ── Configuration ────────────────────────────────────────────
+python-dotenv==1.2.2        # loads .env for the app and worker entrypoints
 
 # ── LangChain (text splitting) ───────────────────────────────
 langchain-core==1.3.0
