@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -447,7 +447,6 @@ class TestRenderHybridPrompt:
         assert "{{rag_result_json}}" not in result
 
     def test_render_produces_valid_json_in_sql_placeholder(self) -> None:
-        import re
         template = "{{sql_result_json}}"
         result = _render_hybrid_prompt(template, "q", _RAG_OK, _SQL_OK)
         parsed = json.loads(result)

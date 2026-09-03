@@ -23,6 +23,8 @@ Naming: test_{stack}_{scenario}_{expected_outcome}
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import json
 import sys
 import time
@@ -31,8 +33,6 @@ from typing import Callable
 
 import pytest
 from fastapi import FastAPI, Request
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parents[4]))
@@ -162,7 +162,7 @@ def jwt_handler() -> JWTHandler:
 
 
 @pytest.fixture(scope="module")
-def full_stack_client(jwt_handler) -> TestClient:
+def full_stack_client(jwt_handler) -> Iterator[TestClient]:
     app = _build_full_stack_app(jwt_handler)
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c

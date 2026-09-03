@@ -5,7 +5,7 @@ Sprint 7+ will replace with MongoUserRepository.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from uuid import uuid4
 

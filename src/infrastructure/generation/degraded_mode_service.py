@@ -77,7 +77,7 @@ class DegradedModeService(DegradedModePort):
                 cache_hit=cache_hit,
             )
 
-            return cached if cache_hit else _UNAVAILABLE_RESPONSE
+            return cached if cached is not None else _UNAVAILABLE_RESPONSE
 
     # ------------------------------------------------------------------
     # DegradedModePort implementation

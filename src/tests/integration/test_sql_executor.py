@@ -100,7 +100,7 @@ class TestExecutionResult:
 class TestQueryLogging:
     def test_every_execution_is_logged(self, executor, validator, log_repo):
         report = _valid_report(validator)
-        result = executor.execute(report, tenant_id="FERZA")
+        executor.execute(report, tenant_id="FERZA")
         assert log_repo.count() == 1
 
     def test_log_entry_has_correct_query_id(self, executor, validator, log_repo):

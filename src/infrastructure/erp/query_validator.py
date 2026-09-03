@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
 
 from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS, SQL_STAGE2_ERRORS
 from src.observability.structured_logger import get_logger
@@ -107,9 +105,9 @@ class QueryValidator:
 
         # --- Rule 2: No forbidden write/DDL statements ------------------------
         for pattern in _FORBIDDEN_STATEMENTS:
-            if re.search(pattern, raw_sql, re.IGNORECASE):
-                keyword = re.search(pattern, raw_sql, re.IGNORECASE).group()
-                errors.append(f"Forbidden SQL keyword: {keyword.upper()}")
+            match = re.search(pattern, raw_sql, re.IGNORECASE)
+            if match:
+                errors.append(f"Forbidden SQL keyword: {match.group().upper()}")
 
         # --- Rule 3: No injection patterns ------------------------------------
         for pattern in _INJECTION_PATTERNS:

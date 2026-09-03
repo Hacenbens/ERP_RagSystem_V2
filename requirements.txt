@@ -98,6 +98,7 @@ mongomock==4.3.0            # in-memory MongoDB for unit tests
 ruff==0.15.9
 mypy==1.20.0
 mypy_extensions==1.1.0
+types-PyYAML==6.0.12.20250915   # mypy stubs for PromptRegistry's yaml loader
 
 # ============================================================
 # Sprint 6 — Worker Reliability (new / missing dependencies)

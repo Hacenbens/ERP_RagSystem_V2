@@ -9,6 +9,7 @@ before returning.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from src.domain.chunk import Chunk
 from src.domain.chunk_strategy import ChunkStrategy
@@ -266,7 +267,7 @@ def build_worker_container() -> DIContainer:
 
     if mongo_uri:
         import pymongo  # type: ignore
-        client = pymongo.MongoClient(mongo_uri)
+        client: Any = pymongo.MongoClient(mongo_uri)
         dead_letter_repo = MongoDeadLetterRepository(
             client["erp_rag"]["failed_tasks"]
         )

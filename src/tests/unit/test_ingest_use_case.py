@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parents[4]))
 
 from src.domain.chunk import Chunk
 from src.domain.ingest import FailedTaskEntry, IngestResult
+from src.domain.ports.asset_storage_port import AssetStoragePort
 from src.infrastructure.persistence.chunk_store import InMemoryChunkStore
 from src.infrastructure.workers.dead_letter_repository import InMemoryDeadLetterRepository
 from src.infrastructure.workers.idempotency_store import InMemoryIdempotencyStore
@@ -44,7 +45,7 @@ def _failing_chunker(content: bytes, strategy: str) -> list[Chunk]:
     raise RuntimeError("chunker simulated failure")
 
 
-class _StubStorage:
+class _StubStorage(AssetStoragePort):
     """Minimal AssetStoragePort stub that always returns CONTENT."""
     def save_bytes(self, tenant_id, asset_id, filename, content):
         return f"{tenant_id}/{asset_id}/{filename}"
