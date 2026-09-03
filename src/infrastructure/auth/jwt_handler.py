@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+from src.observability.structured_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -55,15 +60,31 @@ EXPECTED_ALGORITHM = "RS256"
 _DEFAULT_EXPIRY_SECONDS = int(os.environ.get("JWT_EXPIRY_MINUTES", "60")) * 60
 
 
+def _read_pem(pem_var: str, path_var: str) -> str:
+    """Return PEM text from *pem_var*, or from the file named by *path_var*.
+
+    A PEM is multi-line, which is awkward to carry in an environment variable
+    and easy to mangle in a shell or a compose file, so a path is accepted as
+    the friendlier alternative. The inline variable wins when both are set.
+    """
+    inline = os.environ.get(pem_var, "")
+    if inline.strip():
+        return inline
+    path = os.environ.get(path_var, "")
+    if path.strip():
+        return Path(path).read_text()
+    return ""
+
+
 def _load_private_key_from_env() -> Optional[rsa.RSAPrivateKey]:
-    pem = os.environ.get("JWT_PRIVATE_KEY_PEM", "")
+    pem = _read_pem("JWT_PRIVATE_KEY_PEM", "JWT_PRIVATE_KEY_PATH")
     if not pem:
         return None
     return serialization.load_pem_private_key(pem.encode(), password=None)  # type: ignore[return-value]
 
 
 def _load_public_key_from_env() -> Optional[rsa.RSAPublicKey]:
-    pem = os.environ.get("JWT_PUBLIC_KEY_PEM", "")
+    pem = _read_pem("JWT_PUBLIC_KEY_PEM", "JWT_PUBLIC_KEY_PATH")
     if not pem:
         return None
     return serialization.load_pem_public_key(pem.encode())  # type: ignore[return-value]
@@ -127,6 +148,16 @@ class JWTHandler:
                     format=serialization.PublicFormat.SubjectPublicKeyInfo,
                 )
             else:
+                # Every process that reaches this line signs with a different
+                # key. Two uvicorn workers reject each other's tokens, and a
+                # restart invalidates every session in flight. Fine for tests,
+                # never acceptable for a deployment — hence the warning.
+                logger.warning(
+                    "jwt.ephemeral_keypair — no JWT_PRIVATE_KEY_PEM/"
+                    "JWT_PRIVATE_KEY_PATH configured, so this process generated "
+                    "its own signing key. Tokens will not validate in any other "
+                    "process and will not survive a restart."
+                )
                 self._private_pem, self._public_pem = generate_test_key_pair()
 
         self._expiry_seconds = expiry_seconds
