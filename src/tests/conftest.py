@@ -99,7 +99,7 @@ def registered_user(client) -> dict:
     resp = client.post("/auth/register", json={
         "username": "testuser",
         "password": "testpass123",
-        "role": "VIEWER",
+        "role": "REPORTING_ANALYST",
         "tenant_id": "tenant-abc",
     })
     assert resp.status_code == 201
