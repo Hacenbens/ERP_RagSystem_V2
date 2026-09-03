@@ -20,6 +20,14 @@ class QueryResponse(BaseModel):
     result: dict[str, Any]
     rag_only: bool
     sql_only: bool
+    synthetic: bool = Field(
+        default=False,
+        description=(
+            "True when any figure in this response was generated rather than "
+            "read from the ERP database. Callers must not present a synthetic "
+            "result as real ERP data."
+        ),
+    )
 
 
 __all__ = ["QueryRequest", "QueryResponse"]

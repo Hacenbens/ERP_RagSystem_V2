@@ -25,6 +25,8 @@ class SQLResult:
     latency_ms: float
     tables_used: tuple[str, ...] = field(default_factory=tuple)
     query_id: str = ""
+    executor: str = "in_memory"
+    synthetic: bool = True
 
     @property
     def success(self) -> bool:
