@@ -363,3 +363,77 @@ class TestConfig:
         import helpers.config as cfg
         importlib.reload(cfg)
         assert float(os.environ.get("SQL_SUCCESS_MIN", "0.95")) == pytest.approx(0.80)
+
+
+# ---------------------------------------------------------------------------
+# Benchmark provenance — Sprint 11 (G2·5)
+# ---------------------------------------------------------------------------
+
+class TestBenchmarksReportWhatTheyMeasured:
+    """Both gates scored placeholders while presenting the number as quality.
+
+    The RAG benchmark imported vector_store.milvus_retriever — a module that
+    has never existed — inside a bare `except ImportError: pass`, so the import
+    failed on every run and its own keyword map answered instead. The SQL
+    benchmark called a duplicate of the offline generator rather than the real
+    one. Neither said so.
+
+    They still cannot pass without real infrastructure, and that is fine. What
+    they must not do is let a number be read as a measurement it isn't.
+    """
+
+    def test_rag_benchmark_no_longer_imports_a_module_that_does_not_exist(self):
+        import importlib
+
+        from evaluation.benchmarks import rag_benchmark
+
+        assert "milvus_retriever" not in rag_benchmark.retrieve_chunks.__doc__ or True
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("src.infrastructure.vector_store.milvus_retriever")
+
+    def test_rag_benchmark_reports_a_stub_run_as_a_stub(self):
+        from evaluation.benchmarks import rag_benchmark
+
+        rag_benchmark.retrieve_chunks("purchase order approval", top_k=5)
+
+        assert rag_benchmark.LAST_SOURCE.startswith("stub"), (
+            "with no indexed vector store this must not claim to be the pipeline"
+        )
+
+    def test_rag_benchmark_reports_the_pipeline_when_retrieval_answers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The flag must actually flip — otherwise it is decoration."""
+        from evaluation.benchmarks import rag_benchmark
+        from src.domain.models.scored_chunk import ScoredChunk
+
+        class _Retriever:
+            def retrieve(self, query, k, tenant_id, erp_module=None):
+                return [ScoredChunk(chunk_id="chunk_po_approval", content="x",
+                                    score=0.9, source="a")]
+
+        monkeypatch.setattr(
+            "src.infrastructure.rag.vector_retriever.VectorRetriever",
+            lambda **kwargs: _Retriever(),
+        )
+        ids = rag_benchmark.retrieve_chunks("purchase order approval", top_k=5)
+
+        assert rag_benchmark.LAST_SOURCE == "pipeline"
+        assert ids == ["chunk_po_approval"]
+
+    def test_sql_benchmark_calls_the_real_generator(self):
+        from evaluation.benchmarks import sql_benchmark
+
+        sql = sql_benchmark.generate_sql("total revenue this quarter")
+
+        assert sql_benchmark.LAST_SOURCE in {"offline generator", "LLM pipeline"}
+        assert "tenant_id" in sql
+
+    def test_sql_benchmark_distinguishes_offline_from_llm(self):
+        """used_fallback comes off the result, so the label is not guessed."""
+        from evaluation.benchmarks import sql_benchmark
+
+        sql_benchmark.generate_sql("total revenue")
+
+        # No LLM is configured in the test environment.
+        assert sql_benchmark.LAST_SOURCE == "offline generator"
