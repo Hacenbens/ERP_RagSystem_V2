@@ -79,6 +79,7 @@ def ingest_asset(
     asset_id: str,
     tenant_id: str,
     chunk_strategy: str = "sop",
+    storage_key: str | None = None,
 ) -> dict[str, Any]:
     """Ingest a document asset — accepts IDs only, never full objects.
 
@@ -86,6 +87,13 @@ def ingest_asset(
         asset_id:       Unique identifier of the asset to ingest.
         tenant_id:      Tenant that owns the asset (isolation key).
         chunk_strategy: One of ``"sop"`` | ``"bpmn"`` | ``"tax_circular"``.
+        storage_key:    Key returned by AssetStoragePort.save_bytes. Defaults
+                        to asset_id for tasks enqueued before this argument
+                        existed, which are still on the queue after a deploy.
+
+    On success this dispatches embed_asset for the same asset. Ingestion
+    alone leaves chunks in the chunk store and nothing in the vector store,
+    so retrieval finds nothing — the two halves are one pipeline.
 
     Returns:
         JSON-serialisable dict describing the outcome (success / skipped).
@@ -119,10 +127,20 @@ def ingest_asset(
             tenant_id=tenant_id,
             chunk_strategy=chunk_strategy,
             task_id=task_id,
+            storage_key=storage_key or asset_id,
         )
         WORKER_TASK_DURATION.labels(task_name=TASK_NAME).observe(
             result.duration_ms / 1000
         )
+
+        embed_job_id = _dispatch_embed(
+            container=container,
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            chunk_strategy=chunk_strategy,
+            task_id=task_id,
+        )
+
         return {
             "status": "success",
             "asset_id": result.asset_id,
@@ -131,6 +149,7 @@ def ingest_asset(
             "chunk_strategy": result.chunk_strategy,
             "duration_ms": result.duration_ms,
             "task_id": task_id,
+            "embed_job_id": embed_job_id,
         }
 
     except AssetAlreadyProcessedError:
@@ -199,8 +218,54 @@ def ingest_asset(
 
 
 # ---------------------------------------------------------------------------
-# Internal helper
+# Internal helpers
 # ---------------------------------------------------------------------------
+
+def _dispatch_embed(
+    *,
+    container: Any,
+    asset_id: str,
+    tenant_id: str,
+    chunk_strategy: str,
+    task_id: str,
+) -> str | None:
+    """Queue embedding for a freshly ingested asset.
+
+    Returns the embed task id, or None when dispatch failed.
+
+    A dispatch failure must not fail the ingest task: the chunks are already
+    persisted and the idempotency store already marks the asset processed, so
+    retrying ingest would only raise AssetAlreadyProcessedError. The error is
+    logged and counted so a broker outage is visible rather than silent, and
+    the asset can be re-embedded on its own.
+    """
+    try:
+        dispatcher = container.get("job_dispatcher")
+        embed_job_id: str = dispatcher.dispatch_embed(
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            chunk_strategy=chunk_strategy,
+        )
+        logger.info(
+            "ingest_task.embed_dispatched",
+            task_id=task_id,
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            embed_job_id=embed_job_id,
+        )
+        return embed_job_id
+    except Exception as exc:
+        WORKER_TASKS_FAILED.labels(task_name="workers.tasks.embed_dispatch").inc()
+        logger.error(
+            "ingest_task.embed_dispatch_failed",
+            task_id=task_id,
+            asset_id=asset_id,
+            tenant_id=tenant_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return None
+
 
 def _write_dead_letter(
     *,

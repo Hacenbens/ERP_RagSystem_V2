@@ -333,6 +333,10 @@ def build_worker_container() -> DIContainer:
         embedding_port=embedding_port,
     )
 
+    # The worker dispatches embed_asset once ingest succeeds, so it needs a
+    # dispatcher of its own — the API process's container is a different object
+    # in a different process.
+    container.register("job_dispatcher", CeleryJobDispatcher())
     container.register("dead_letter_repository", dead_letter_repo)
     container.register("idempotency_store", idempotency_store)
     container.register("chunk_store", chunk_store)

@@ -32,6 +32,7 @@ TENANT_ID = "tenant-ferza"
 OTHER_TENANT = "tenant-acme"
 TASK_ID = "task-xyz-999"
 STRATEGY = "sop"
+STORAGE_KEY = f"{TENANT_ID}/{ASSET_ID}/doc.txt"
 CONTENT = b"sample document bytes"
 
 
@@ -271,6 +272,7 @@ class TestIngestAssetUseCase:
         result = use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
         )
         assert isinstance(result, IngestResult)
         assert result.asset_id == ASSET_ID
@@ -284,6 +286,7 @@ class TestIngestAssetUseCase:
         use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
         )
         assert idempotency.is_processed(ASSET_ID, TENANT_ID) is True
 
@@ -292,6 +295,7 @@ class TestIngestAssetUseCase:
         use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
         )
         chunks = chunk_store.find_by_asset(ASSET_ID, TENANT_ID)
         assert len(chunks) == 3
@@ -301,6 +305,7 @@ class TestIngestAssetUseCase:
         result = use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
         )
         assert result.duration_ms >= 0
 
@@ -311,6 +316,7 @@ class TestIngestAssetUseCase:
             use_case.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
             )
 
     def test_storage_failure_propagates_without_calling_chunk_store(self):
@@ -319,6 +325,7 @@ class TestIngestAssetUseCase:
             use_case.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
             )
         assert chunk_store.find_by_asset(ASSET_ID, TENANT_ID) == []
 
@@ -328,6 +335,7 @@ class TestIngestAssetUseCase:
             use_case.execute(
                 asset_id=ASSET_ID, tenant_id=TENANT_ID,
                 chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
             )
         assert idempotency.is_processed(ASSET_ID, TENANT_ID) is False
 
@@ -342,6 +350,7 @@ class TestIngestAssetUseCase:
         use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy="bpmn", task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
         )
         assert received == [(CONTENT, "bpmn")]
 
@@ -350,10 +359,12 @@ class TestIngestAssetUseCase:
         use_case.execute(
             asset_id=ASSET_ID, tenant_id=TENANT_ID,
             chunk_strategy=STRATEGY, task_id=TASK_ID,
+            storage_key=STORAGE_KEY,
         )
         assert idempotency.is_processed(ASSET_ID, OTHER_TENANT) is False
         result = use_case.execute(
             asset_id=ASSET_ID, tenant_id=OTHER_TENANT,
             chunk_strategy=STRATEGY, task_id="task-2",
+            storage_key=STORAGE_KEY,
         )
         assert result.tenant_id == OTHER_TENANT
