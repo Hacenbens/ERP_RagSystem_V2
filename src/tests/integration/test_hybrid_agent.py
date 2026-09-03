@@ -9,6 +9,8 @@ All I/O is mocked:
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import json
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from fastapi.testclient import TestClient
 from src.agents.hybrid_agent import HybridAgent
 from src.agents.rag_agent import RAGAgent
 from src.agents.sql_agent import SQLAgent
+from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.erp.query_executor import QueryExecutor
@@ -84,7 +87,7 @@ class _StubLLM(LLMPort):
 # Constant embedder — gives non-zero cosine similarity in InMemoryVectorStore
 # ---------------------------------------------------------------------------
 
-class _ConstantEmbedder:
+class _ConstantEmbedder(EmbeddingPort):
     """Returns the same unit vector for every text, so all chunks score 1.0."""
 
     _VECTOR: list[float] = [1.0] + [0.0] * 767
@@ -196,7 +199,7 @@ def _build_test_app() -> FastAPI:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def client() -> TestClient:
+def client() -> Iterator[TestClient]:
     app = _build_test_app()
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c

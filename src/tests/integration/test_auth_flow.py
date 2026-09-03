@@ -17,7 +17,6 @@ from src.tests.fixtures.jwt_fixtures import (
     make_expired_token,
     make_jwt_handler,
     make_tampered_token,
-    make_valid_token,
     make_wrong_algorithm_token,
 )
 

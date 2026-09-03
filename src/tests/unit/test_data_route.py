@@ -6,9 +6,7 @@ Includes both stub-based route tests and a real filesystem path-verification tes
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

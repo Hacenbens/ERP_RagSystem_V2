@@ -12,11 +12,10 @@ Offline fallback generates deterministic SQL from keyword mapping
 from __future__ import annotations
 
 import os
-import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS, SQL_STAGE1_LATENCY
+from src.observability.prometheus_metrics import SQL_STAGE1_LATENCY
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from typing import Optional
-from uuid import uuid4
 
 from src.observability.structured_logger import get_logger
 

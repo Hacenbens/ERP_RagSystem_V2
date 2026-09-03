@@ -27,6 +27,8 @@ What is verified
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -50,10 +52,8 @@ from src.infrastructure.workers.idempotency_store import InMemoryIdempotencyStor
 from src.infrastructure.workers.tasks.embed_task import embed_asset
 from src.infrastructure.workers.tasks.ingest_task import ingest_asset
 from src.observability.prometheus_metrics import (
-    EMBED_TASK_DURATION,
     EMBED_TASKS_DISPATCHED,
     EMBED_TASKS_FAILED,
-    WORKER_TASK_DURATION,
     WORKER_TASKS_DISPATCHED,
     WORKER_TASKS_FAILED,
 )
@@ -190,7 +190,7 @@ def _mock_ar(state: str, result=None) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def metrics_client() -> TestClient:
+def metrics_client() -> Iterator[TestClient]:
     """Bare FastAPI app with only the admin router — no auth middleware."""
     app = FastAPI()
     app.include_router(admin_router)
@@ -238,7 +238,7 @@ class TestMetricsEndpointHealth:
 
     def test_get_metrics_contains_erp_rag_lines(self, metrics_client):
         text = metrics_client.get("/metrics").text
-        erp_lines = [l for l in text.splitlines() if "erp_rag_" in l]
+        erp_lines = [line for line in text.splitlines() if "erp_rag_" in line]
         assert len(erp_lines) > 0
 
 

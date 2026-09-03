@@ -7,6 +7,9 @@ Covers: InMemoryVectorStore.upsert / search_similar / clear
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
+
 import math
 
 import pytest
@@ -185,7 +188,7 @@ _DIM = 4
 
 
 @pytest.fixture()
-def store(tmp_path: pytest.TempPathFactory) -> MilvusVectorStore:
+def store(tmp_path: Path) -> Iterator[MilvusVectorStore]:
     """Fresh Milvus Lite store per test — fully isolated, no server required."""
     s = MilvusVectorStore(uri=str(tmp_path / "test.db"), dim=_DIM)
     yield s
@@ -366,7 +369,7 @@ class TestMilvusPortCompliance:
     def test_milvus_vector_store_is_vector_store_port(self, store: MilvusVectorStore) -> None:
         assert isinstance(store, VectorStorePort)
 
-    def test_drop_clears_metadata_and_allows_fresh_start(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_drop_clears_metadata_and_allows_fresh_start(self, tmp_path: Path) -> None:
         db = str(tmp_path / "drop_test.db")
         s = MilvusVectorStore(uri=db, dim=_DIM)
         s.save_vectors("a-1", "t-1", 7)
