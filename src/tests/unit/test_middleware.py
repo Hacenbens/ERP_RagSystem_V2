@@ -21,6 +21,7 @@ import pytest
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
+from src.middleware.public_paths import PUBLIC_PATHS
 from src.observability.structured_logger import _JSONFormatter
 
 
@@ -477,6 +478,51 @@ class TestRBACMiddleware:
 # ===========================================================================
 # PIIMaskingMiddleware
 # ===========================================================================
+
+# ===========================================================================
+# Public paths — shared by AuthMiddleware and RBACMiddleware
+# ===========================================================================
+
+class TestPublicPaths:
+    """Every public path must traverse the full middleware stack untokenised.
+
+    Regression guard for the Sprint 10 blocker: RBACMiddleware read `path`
+    before assigning it, so every request — public ones included — raised
+    UnboundLocalError and Starlette returned 500. A middleware fault shows up
+    as a 5xx, which no existing test asserted against on the public routes.
+    """
+
+    @pytest.fixture()
+    def public_client(self):
+        from src.middleware.AuthMiddleware import AuthMiddleware
+        from src.middleware.RBACMiddleware import RBACMiddleware
+
+        app = _make_app(AuthMiddleware, RBACMiddleware)
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_health_returns_200_without_a_token(self, public_client):
+        resp = public_client.get("/health")
+        assert resp.status_code == 200
+
+    def test_no_public_path_raises_through_the_stack(self, public_client):
+        """A 5xx here means a middleware raised, not that the route is missing."""
+        for path in sorted(PUBLIC_PATHS):
+            resp = public_client.get(path)
+            assert resp.status_code < 500, (
+                f"{path} returned {resp.status_code} — a middleware raised on a public path"
+            )
+
+    def test_protected_path_still_requires_a_token(self, public_client):
+        """Skipping public paths must not open anything that was guarded."""
+        resp = public_client.get("/admin/jobs")
+        assert resp.status_code == 401
+
+    def test_both_middlewares_read_the_same_public_set(self):
+        """AuthMiddleware and RBACMiddleware must never drift apart."""
+        from src.middleware.AuthMiddleware import _PUBLIC_PATHS
+
+        assert _PUBLIC_PATHS is PUBLIC_PATHS
+
 
 class TestPIIMaskingMiddleware:
     """PIIMaskingMiddleware detects and masks PII in query text."""

@@ -23,20 +23,15 @@ from src.infrastructure.auth.jwt_handler import (
     TokenExpiredError,
     TokenInvalidError,
 )
+from src.middleware.public_paths import PUBLIC_PATHS
 from src.observability.prometheus_metrics import AUTH_FAILURE_RATE, MIDDLEWARE_VIOLATIONS
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
-# Routes that do NOT require authentication
-_PUBLIC_PATHS: frozenset[str] = frozenset({
-    "/health",
-    "/auth/login",
-    "/auth/register",
-    "/auth/request-password-reset",
-    "/auth/reset-password",
-    "/metrics",
-})
+# Routes that do NOT require authentication.
+# Defined in one place and shared with RBACMiddleware so the two cannot drift.
+_PUBLIC_PATHS: frozenset[str] = PUBLIC_PATHS
 
 
 def _401(reason: str, detail: str) -> JSONResponse:
