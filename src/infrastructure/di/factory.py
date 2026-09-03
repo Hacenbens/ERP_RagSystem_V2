@@ -28,7 +28,9 @@ from src.infrastructure.rag.context_builder import ContextBuilder
 from src.infrastructure.rag.embedding_providers import NgrokEmbeddingProvider, NoopEmbeddingProvider
 from src.infrastructure.rag.reranker import CrossEncoderReranker, IdentityReranker
 from src.infrastructure.rag.vector_retriever import VectorRetriever
+from src.domain.ports.asset_storage_port import AssetStoragePort
 from src.infrastructure.storage.local_asset_storage import LocalAssetStorage
+from src.infrastructure.storage.minio_asset_storage import MinioAssetStorage
 from src.infrastructure.workers.celery_job_dispatcher import CeleryJobDispatcher
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
@@ -129,6 +131,29 @@ def _select_embedder() -> EmbeddingPort:
         return NgrokEmbeddingProvider()
     logger.warning("factory.embedder.noop — set NGROK_BASE_URL to enable real embeddings")
     return NoopEmbeddingProvider()
+
+
+def _select_asset_storage() -> AssetStoragePort:
+    """Return MinioAssetStorage when MinIO is configured, else local files.
+
+    LocalAssetStorage writes to a filesystem path, and the API and worker each
+    have their own. An upload landed on one and the worker looked on the other
+    and found nothing — the B-4 storage-key failure at the container boundary.
+    A shared compose volume papers over that on a single host; an object store
+    is what survives more than one.
+    """
+    endpoint = os.environ.get("MINIO_ENDPOINT", "")
+    access_key = os.environ.get("MINIO_ACCESS_KEY", "")
+    if endpoint and access_key:
+        logger.info("factory.asset_storage.minio", endpoint=endpoint)
+        return MinioAssetStorage()
+    logger.warning(
+        "factory.asset_storage.local — set MINIO_ENDPOINT and MINIO_ACCESS_KEY "
+        "for storage the API and worker can share across hosts"
+    )
+    return LocalAssetStorage(
+        base_path=os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
+    )
 
 
 def _select_reranker() -> "IdentityReranker | CrossEncoderReranker":
@@ -289,8 +314,7 @@ def build_container() -> DIContainer:
     build_query_chain(container)
 
     # --- Ingestion ports (Sprint 7 Task 20/21) -------------------------
-    asset_storage_path = os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
-    container.register("asset_storage", LocalAssetStorage(base_path=asset_storage_path))
+    container.register("asset_storage", _select_asset_storage())
     container.register("job_dispatcher", CeleryJobDispatcher())
 
     # Validate before returning — app must not start with unbound ports
@@ -383,8 +407,6 @@ def build_worker_container() -> DIContainer:
     container.register("auth_use_case", auth_use_case)
 
     # --- Worker dependencies ---------------------------------------------
-    asset_storage_path = os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
-
     dead_letter_repo: InMemoryDeadLetterRepository | MongoDeadLetterRepository
     idempotency_store: InMemoryIdempotencyStore | MongoIdempotencyStore
     chunk_store: InMemoryChunkStore | MongoChunkStore
@@ -403,7 +425,7 @@ def build_worker_container() -> DIContainer:
         chunk_store = InMemoryChunkStore()
 
     vector_store = _select_vector_store()
-    asset_storage = LocalAssetStorage(base_path=asset_storage_path)
+    asset_storage = _select_asset_storage()
     embedding_port = _select_embedder()
 
     _chunker_factory = ChunkerFactory()
