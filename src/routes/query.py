@@ -69,15 +69,24 @@ async def query_endpoint(
     """
     claims = _get_claims(request)
 
+    # PIIMaskingMiddleware puts the redacted text on request.state; it cannot
+    # rewrite the request body itself. Reading body.query directly — which this
+    # route did — sent the raw text with any email, phone or tax ID straight to
+    # a third-party model, with the masking middleware running and doing
+    # nothing observable.
+    masked_query: str = getattr(request.state, "pii_masked_query", None) or body.query
+    pii_hits: dict = getattr(request.state, "pii_hits", {}) or {}
+
     logger.info(
         "query_route.start",
         tenant_id=claims.tenant_id,
         role=claims.role,
-        query_len=len(body.query),
+        query_len=len(masked_query),
+        pii_entities_masked=sum(pii_hits.values()) if pii_hits else 0,
     )
 
     try:
-        result = await route_uc.execute(body.query, claims)
+        result = await route_uc.execute(masked_query, claims)
     except BlockedQueryError as exc:
         logger.warning("query_route.blocked", reason=str(exc))
         raise HTTPException(
