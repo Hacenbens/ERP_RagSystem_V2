@@ -10,11 +10,11 @@ Pipeline:
 """
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, Protocol, runtime_checkable
 
 from src.agents.base_agent import AgentContext, BaseAgent
+from src.agents.helpers import parse_llm_json
 from src.domain.models.rag_result import RAGResult
 from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.rag.context_builder import ContextBuilder
@@ -98,7 +98,7 @@ class RAGAgent(BaseAgent):
         )
 
         try:
-            output: dict[str, Any] = json.loads(raw)
+            output: dict[str, Any] = parse_llm_json(raw)
             self._registry.validate_output(pv, output)
         except Exception as exc:
             logger.warning("rag_agent.parse_failed", error=str(exc))

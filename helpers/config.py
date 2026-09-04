@@ -48,12 +48,20 @@ def erp_pg_dsn() -> str:
     A password is required: connecting to the real ERP as the read-only user
     without one is not something to attempt implicitly. Absent it, callers
     get "" and must present their results as synthetic.
+
+    Reads the environment on each call rather than the module constants above.
+    Those are import-time snapshots, so a process that changes configuration
+    afterwards — a test clearing ERP_PG_PASSWORD to exercise the synthetic
+    path, an entrypoint loading .env late — would keep getting the DSN that
+    was true when this module first happened to be imported.
     """
-    if not ERP_PG_PASSWORD:
+    password = _env("ERP_PG_PASSWORD", "")
+    if not password:
         return ""
     return (
-        f"postgresql://{ERP_PG_USER}:{ERP_PG_PASSWORD}"
-        f"@{ERP_PG_HOST}:{ERP_PG_PORT}/{ERP_PG_DATABASE}"
+        f"postgresql://{_env('ERP_PG_USER', 'erp_readonly')}:{password}"
+        f"@{_env('ERP_PG_HOST', 'localhost')}:{_env('ERP_PG_PORT', '5432')}"
+        f"/{_env('ERP_PG_DATABASE', 'erp_prod')}"
     )
 
 # ---------------------------------------------------------------------------

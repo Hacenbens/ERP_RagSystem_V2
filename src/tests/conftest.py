@@ -76,6 +76,48 @@ def build_test_app(jwt_handler: JWTHandler | None = None) -> tuple[FastAPI, DICo
     return app, container
 
 
+# ---------------------------------------------------------------------------
+# Environment isolation
+# ---------------------------------------------------------------------------
+
+# Variables that steer what the DI factory selects. langsmith calls
+# load_dotenv() when it is imported, and langchain_text_splitters pulls it in,
+# so the developer's real .env reaches the test process whether or not any
+# project code asks for it. Once that .env held real values, tests asserting
+# in-memory defaults started failing against MongoDB, PostgreSQL and the
+# operator's JWT keys — the suite was reading the machine it ran on.
+_DI_STEERING_VARS = (
+    "MONGODB_URI",
+    "MILVUS_DB_URI",
+    "ERP_PG_PASSWORD",
+    "ERP_PG_DSN",
+    "NGROK_BASE_URL",
+    "GEMINI_API_KEY",
+    "VLLM_BASE_URL",
+    "VLLM_MODEL",
+    "MINIO_ENDPOINT",
+    "MINIO_ACCESS_KEY",
+    "JWT_PRIVATE_KEY_PEM",
+    "JWT_PUBLIC_KEY_PEM",
+    "JWT_PRIVATE_KEY_PATH",
+    "JWT_PUBLIC_KEY_PATH",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test against the in-memory defaults, whatever .env holds.
+
+    A test that wants a real service sets its own variable afterwards — this
+    runs first, so monkeypatch.setenv in a test still wins. Deliberately does
+    not clear the *_TEST_* variables that gate the opt-in integration suites
+    (MINIO_TEST_ENDPOINT, ERP_PG_TEST_DSN); those name a fixture explicitly
+    rather than steering production selection.
+    """
+    for name in _DI_STEERING_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture()
 def jwt_handler() -> JWTHandler:
     return make_jwt_handler()

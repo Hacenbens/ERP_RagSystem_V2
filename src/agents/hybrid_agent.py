@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 from src.agents.base_agent import AgentContext, BaseAgent
+from src.agents.helpers import parse_llm_json
 from src.agents.rag_agent import RAGAgent
 from src.agents.sql_agent import SQLAgent
 from src.domain.models.hybrid_result import HybridResult
@@ -157,7 +158,7 @@ class HybridAgent(BaseAgent):
         )
 
         try:
-            output: dict[str, Any] = json.loads(raw)
+            output: dict[str, Any] = parse_llm_json(raw)
             self._registry.validate_output(pv, output)
         except Exception as exc:
             logger.warning("hybrid_agent.merge_parse_failed", error=str(exc))
