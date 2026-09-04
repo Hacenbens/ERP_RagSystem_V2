@@ -131,4 +131,9 @@ pymilvus==2.5.18
 # MinioAssetStorage: object storage the API and worker share across hosts.
 # LocalAssetStorage only works when both run on the same filesystem.
 minio==7.2.20
+
+# PostgreSQLExecutor imports psycopg2 to reach the read-only ERP replica. It
+# was never declared, so a configured database selected the Postgres executor
+# and then failed every query with "psycopg2 not installed".
+psycopg2-binary==2.9.11
 setuptools>=68,<71          # milvus-lite depends on pkg_resources (removed in Python 3.12+)

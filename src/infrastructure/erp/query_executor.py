@@ -41,6 +41,10 @@ class SQLExecutionError(Exception):
     """Raised when the SQL execution itself fails."""
 
 
+class PostgresDriverMissingError(RuntimeError):
+    """Raised when a database is configured but psycopg2 is not installed."""
+
+
 @dataclass
 class ExecutionResult:
     """Output of Stage 3."""
@@ -164,11 +168,34 @@ class QueryExecutor:
 
     def _build_executor(self):
         if self._pg_dsn:
+            self._require_psycopg2()
             try:
                 return PostgreSQLExecutor(self._pg_dsn)
             except Exception:
                 logger.error("sql.stage3.pg_connect_failed — falling back to synthetic rows")
         return InMemoryExecutor()
+
+    @staticmethod
+    def _require_psycopg2() -> None:
+        """Fail startup when a database is configured but the driver is missing.
+
+        PostgreSQLExecutor imports psycopg2 inside execute(), so without the
+        driver the executor was still selected: executor_name became
+        "postgresql", every query returned zero rows with
+        "psycopg2 not installed", and .synthetic was False — the API reported
+        an empty result as real ERP data. Claiming provenance the system
+        cannot deliver is worse than either failing or answering synthetically,
+        so this is checked once, up front.
+        """
+        try:
+            import psycopg2  # noqa: F401
+        except ImportError as exc:
+            raise PostgresDriverMissingError(
+                "ERP PostgreSQL is configured (ERP_PG_PASSWORD is set) but "
+                "psycopg2 is not installed. Install it with "
+                "`pip install -r requirements.txt`, or clear ERP_PG_PASSWORD "
+                "to run on synthetic rows flagged synthetic: true."
+            ) from exc
 
     def execute(
         self,
@@ -255,6 +282,7 @@ class QueryExecutor:
 
 __all__ = [
     "QueryExecutor",
+    "PostgresDriverMissingError",
     "ExecutionResult",
     "TenantFilterMissingError",
     "SQLExecutionError",
