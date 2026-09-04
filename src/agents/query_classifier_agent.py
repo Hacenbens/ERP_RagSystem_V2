@@ -19,6 +19,7 @@ import json
 
 import jsonschema
 
+from src.agents.helpers import parse_llm_json
 from src.domain.erp_module import ErpModule
 from src.domain.models.routing_decision import RoutingDecision
 from src.domain.ports.llm_port import LLMPort
@@ -140,7 +141,7 @@ class QueryClassifierAgent(QueryClassifierPort):
     def _parse_and_validate(self, raw: str, prompt_version) -> dict:
         """Parse *raw* as JSON and validate against the prompt's schema."""
         try:
-            parsed = json.loads(raw)
+            parsed = parse_llm_json(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"classifier returned non-JSON response: {raw!r}"

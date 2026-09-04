@@ -221,3 +221,39 @@ class TestDocumentBecomesRetrievable:
         assert vector_store.search_similar(
             query_embedding=query, k=5, tenant_id="other-tenant"
         ) == []
+
+
+class TestBothTasksAreRegistered:
+    """A dispatched task the worker never registered is silently undone work.
+
+    celery_app calls autodiscover_tasks on the tasks package, which imports
+    src/infrastructure/workers/tasks/__init__.py and nothing deeper. embed_task
+    was missing from those imports, so `embed_asset` was never registered: the
+    worker started cleanly advertising only ingest_asset, and the embed job
+    that ingest_task dispatches had no consumer. Chunks were written and
+    nothing was ever vectorised — the B-5 failure returning by a different
+    door, after B-5 itself was fixed.
+    """
+
+    def test_both_tasks_are_registered_with_celery(self):
+        from src.infrastructure.workers.celery_app import celery_app
+        import src.infrastructure.workers.tasks  # noqa: F401  (registers them)
+
+        registered = {n for n in celery_app.tasks if n.startswith("workers.tasks.")}
+
+        assert registered == {
+            "workers.tasks.ingest_asset",
+            "workers.tasks.embed_asset",
+        }
+
+    def test_the_name_ingest_dispatches_is_the_name_that_is_registered(self):
+        """The dispatcher and the task must agree on the string."""
+        from src.infrastructure.workers.celery_app import celery_app
+        from src.infrastructure.workers.tasks.embed_task import TASK_NAME
+
+        assert TASK_NAME in celery_app.tasks
+
+    def test_the_package_exports_both(self):
+        import src.infrastructure.workers.tasks as tasks
+
+        assert set(tasks.__all__) == {"embed_asset", "ingest_asset"}

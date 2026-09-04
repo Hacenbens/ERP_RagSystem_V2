@@ -689,7 +689,25 @@ class TestQueryClassifierAgent:
 
     def test_classifier_agent_raises_value_error_on_invalid_json(self):
         agent = _make_classifier("not json at all")
-        with pytest.raises(ValueError, match="non-JSON"):
+        with pytest.raises(ValueError, match="No JSON object"):
+            agent.classify("Some query.")
+
+    def test_classifier_agent_accepts_json_wrapped_in_a_markdown_fence(self):
+        """Gemini fences its JSON, which a bare json.loads cannot read.
+
+        Every agent called json.loads directly, so a fenced reply failed with
+        "Expecting value: line 1 column 1 (char 0)" — and RAGAgent turned that
+        into not_grounded(), indistinguishable from the model honestly saying
+        it could not answer.
+        """
+        payload = json.dumps({"intent": "RAG", "confidence": 0.9, "reason": "doc"})
+        agent = _make_classifier(f"```json\n{payload}\n```")
+
+        assert agent.classify("Some query.").intent is QueryIntent.RAG
+
+    def test_classifier_agent_raises_on_an_empty_response(self):
+        agent = _make_classifier("")
+        with pytest.raises(ValueError, match="empty"):
             agent.classify("Some query.")
 
     def test_classifier_agent_raises_value_error_on_schema_violation(self):
