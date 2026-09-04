@@ -13,6 +13,7 @@ Falls back to InMemoryExecutor when PG_HOST is unavailable (tests / CI).
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -111,6 +112,51 @@ class InMemoryExecutor:
 # PostgreSQL executor (production)
 # ---------------------------------------------------------------------------
 
+_NAMED_PARAM_RE = re.compile(r"(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)")
+_SINGLE_QUOTED_RE = re.compile(r"'(?:[^']|'')*'")
+
+
+def to_pyformat(sql: str) -> str:
+    """Rewrite ``:name`` placeholders as psycopg2's ``%(name)s``.
+
+    The pipeline speaks one placeholder style end to end — QueryGenerator emits
+    ``WHERE tenant_id = :tenant_id`` and QueryValidator checks for exactly that
+    — but psycopg2 only understands pyformat. Passing the SQL through
+    unchanged sent a literal colon to the server:
+
+        syntax error at or near ":"
+        LINE 1: ... FROM sales_orders WHERE tenant_id = :tenant_id
+
+    Every query against a real database failed that way, and because the
+    executor logs the error and returns an empty result rather than raising,
+    the API answered 200 with no rows and synthetic=False — reporting a total
+    failure as genuine ERP data.
+
+    Translating here rather than changing the generator keeps ``:name`` as the
+    pipeline's own vocabulary and makes paramstyle what it should be: a detail
+    of the driver adapter. InMemoryExecutor is unaffected.
+
+    Two hazards handled:
+
+    - ``::`` casts. ``created_at::date`` must survive; the lookbehind stops the
+      second colon matching, and the first cannot because a colon does not
+      start an identifier.
+    - Literal ``%``. Once any parameters are passed, psycopg2 treats ``%`` in
+      the SQL as a format character, so ``LIKE '%draft%'`` raises
+      IndexError. Percent signs are doubled first, everywhere, then
+      placeholders are substituted outside quoted strings only — so a colon
+      inside a string literal is left alone.
+    """
+    out: list[str] = []
+    last = 0
+    for match in _SINGLE_QUOTED_RE.finditer(sql):
+        out.append(_NAMED_PARAM_RE.sub(r"%(\1)s", sql[last:match.start()].replace("%", "%%")))
+        out.append(match.group(0).replace("%", "%%"))  # literal: escape only
+        last = match.end()
+    out.append(_NAMED_PARAM_RE.sub(r"%(\1)s", sql[last:].replace("%", "%%")))
+    return "".join(out)
+
+
 class PostgreSQLExecutor:
     """Executes read-only SQL against the ERP PostgreSQL instance."""
 
@@ -123,7 +169,7 @@ class PostgreSQLExecutor:
             import psycopg2.extras  # type: ignore
             with psycopg2.connect(self._dsn) as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(sql, params)
+                    cur.execute(to_pyformat(sql), params)
                     return [dict(row) for row in cur.fetchall()]
         except ImportError:
             raise SQLExecutionError("psycopg2 not installed — cannot connect to PostgreSQL.")
@@ -282,6 +328,7 @@ class QueryExecutor:
 
 __all__ = [
     "QueryExecutor",
+    "to_pyformat",
     "PostgresDriverMissingError",
     "ExecutionResult",
     "TenantFilterMissingError",
