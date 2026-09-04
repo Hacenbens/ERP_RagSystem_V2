@@ -141,6 +141,80 @@ class TestHttpResponseCarriesTheFlag:
         assert body.synthetic is False
 
 
+class TestPostgresDriverIsRequired:
+    """A configured database with no driver claimed real data and returned none.
+
+    PostgreSQLExecutor imports psycopg2 inside execute(), so without the driver
+    the executor was still selected: executor_name became "postgresql", every
+    query returned zero rows with "psycopg2 not installed", and .synthetic was
+    False. The API reported an empty failed result as genuine ERP data —
+    worse than either failing or answering synthetically, because the flag
+    added in this sprint was actively lying.
+    """
+
+    def test_missing_driver_fails_at_construction(self, monkeypatch):
+        import builtins
+
+        from src.infrastructure.erp.query_executor import PostgresDriverMissingError
+
+        real_import = builtins.__import__
+
+        def _no_psycopg2(name, *args, **kwargs):
+            if name == "psycopg2":
+                raise ImportError("simulated missing driver")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_psycopg2)
+
+        with pytest.raises(PostgresDriverMissingError, match="psycopg2"):
+            QueryExecutor(pg_dsn="postgresql://ro:pw@localhost:5432/erp")
+
+    def test_the_error_says_how_to_recover(self, monkeypatch):
+        import builtins
+
+        from src.infrastructure.erp.query_executor import PostgresDriverMissingError
+
+        real_import = builtins.__import__
+
+        def _no_psycopg2(name, *args, **kwargs):
+            if name == "psycopg2":
+                raise ImportError("simulated missing driver")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_psycopg2)
+
+        with pytest.raises(PostgresDriverMissingError) as exc:
+            QueryExecutor(pg_dsn="postgresql://ro:pw@localhost:5432/erp")
+
+        assert "requirements.txt" in str(exc.value)
+        assert "ERP_PG_PASSWORD" in str(exc.value)
+
+    def test_no_dsn_does_not_need_the_driver(self, monkeypatch):
+        """CI and local runs have no database and must not require psycopg2."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_psycopg2(name, *args, **kwargs):
+            if name == "psycopg2":
+                raise ImportError("simulated missing driver")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_psycopg2)
+
+        assert QueryExecutor(pg_dsn="").executor_name == "in_memory"
+
+    def test_the_driver_is_declared_as_a_dependency(self):
+        """It was imported by production code and never listed."""
+        from pathlib import Path as _Path
+
+        requirements = (
+            _Path(__file__).resolve().parents[3] / "requirements.txt"
+        ).read_text()
+
+        assert "psycopg2" in requirements
+
+
 class TestDefaultsAreHonest:
     def test_sql_result_defaults_to_synthetic(self):
         """An un-annotated result must claim less, not more."""
