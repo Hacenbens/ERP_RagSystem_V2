@@ -4,6 +4,7 @@ Unit tests for Sprint 7 RAG reranker and context builder infrastructure.
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from src.domain.models.scored_chunk import ScoredChunk
 from src.infrastructure.rag.context_builder import ContextBuilder
@@ -195,3 +196,76 @@ class TestContextBuilder:
         context = builder.build([], max_tokens=10)
 
         assert context == ""
+
+
+# ---------------------------------------------------------------------------
+# Reranker selection — Sprint 11 (G3·4)
+# ---------------------------------------------------------------------------
+
+class TestRerankerSelection:
+    """CrossEncoderReranker was written, tested, and never constructed.
+
+    The factory hardcoded IdentityReranker(), which only re-sorts by the score
+    the vector store already returned — so the rerank stage was a no-op and the
+    five chunks handed to the LLM were whichever five cosine similarity liked,
+    with no query-document interaction scoring at all.
+    """
+
+    def test_cross_encoder_is_selected_when_a_service_is_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.infrastructure.di.factory import _select_reranker
+        from src.infrastructure.rag.reranker import CrossEncoderReranker
+
+        monkeypatch.setenv("NGROK_BASE_URL", "https://reranker.example")
+
+        assert isinstance(_select_reranker(), CrossEncoderReranker)
+
+    def test_identity_is_used_when_nothing_is_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.infrastructure.di.factory import _select_reranker
+        from src.infrastructure.rag.reranker import IdentityReranker
+
+        monkeypatch.delenv("NGROK_BASE_URL", raising=False)
+
+        assert isinstance(_select_reranker(), IdentityReranker)
+
+    def test_a_reranker_outage_degrades_ordering_not_the_request(self) -> None:
+        """Why selecting the cross-encoder is safe even when the endpoint is down."""
+        import httpx
+
+        from src.domain.models.scored_chunk import ScoredChunk
+        from src.infrastructure.rag.reranker import CrossEncoderReranker
+
+        def _dead(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(502, text="bad gateway")
+
+        reranker = CrossEncoderReranker(
+            base_url="https://dead.example",
+            transport=httpx.MockTransport(_dead),
+        )
+        docs = [
+            ScoredChunk(chunk_id="c1", content="low", score=0.1, source="a"),
+            ScoredChunk(chunk_id="c2", content="high", score=0.9, source="a"),
+        ]
+
+        ranked = reranker.rerank("q", docs, top_k=2)
+
+        assert [d.chunk_id for d in ranked] == ["c2", "c1"]
+
+    def test_the_cross_encoder_reorders_when_the_service_answers(self) -> None:
+        """The point of the stage: interaction scores can beat cosine order."""
+        from src.domain.models.scored_chunk import ScoredChunk
+        from src.infrastructure.rag.reranker import CrossEncoderReranker
+
+        # The vector store liked c1; the cross-encoder disagrees.
+        reranker = CrossEncoderReranker(predictor=lambda pairs: [0.1, 0.95])
+        docs = [
+            ScoredChunk(chunk_id="c1", content="vaguely related", score=0.9, source="a"),
+            ScoredChunk(chunk_id="c2", content="exactly on point", score=0.2, source="a"),
+        ]
+
+        ranked = reranker.rerank("q", docs, top_k=2)
+
+        assert [d.chunk_id for d in ranked] == ["c2", "c1"]

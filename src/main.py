@@ -5,15 +5,13 @@ Run with:
     uvicorn src.main:app --reload
 
 Middleware order (outermost first at request time):
-    LoggingMiddleware → AuthMiddleware → RBACMiddleware → route handler
+    LoggingMiddleware → AuthMiddleware → RateLimitMiddleware
+    → RBACMiddleware → PIIMaskingMiddleware → route handler
 
 Starlette applies add_middleware() in reverse, so the calls below read
 bottom-up: the last one added is the first one to see a request.
 
-RateLimitMiddleware and PIIMaskingMiddleware are implemented and tested but
-deliberately not mounted yet — see src/middleware/__init__.py. Wiring them
-changes request behaviour and belongs in its own change, not in the commit
-that first puts this file under version control.
+All five middlewares documented in src/middleware/__init__.py are mounted.
 """
 from __future__ import annotations
 
@@ -33,6 +31,8 @@ from fastapi import FastAPI  # noqa: E402
 from src.infrastructure.di.factory import build_container  # noqa: E402
 from src.middleware.AuthMiddleware import AuthMiddleware  # noqa: E402
 from src.middleware.LoggingMiddleware import LoggingMiddleware  # noqa: E402
+from src.middleware.PIIMaskingMiddleware import PIIMaskingMiddleware  # noqa: E402
+from src.middleware.RateLimitMiddleware import RateLimitMiddleware  # noqa: E402
 from src.middleware.RBACMiddleware import RBACMiddleware  # noqa: E402
 from src.observability.structured_logger import get_logger  # noqa: E402
 from src.routes.admin import router as admin_router  # noqa: E402
@@ -62,8 +62,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Added in reverse: LoggingMiddleware ends up outermost.
+# Added in reverse: LoggingMiddleware ends up outermost, PIIMasking innermost.
+# RateLimit sits inside Auth so it can key on the authenticated user_id that
+# AuthMiddleware puts on request.state; outside it, every caller would share
+# the anonymous bucket.
+app.add_middleware(PIIMaskingMiddleware)
 app.add_middleware(RBACMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(LoggingMiddleware)
 

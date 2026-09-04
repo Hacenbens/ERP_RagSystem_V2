@@ -54,6 +54,12 @@ def _make_app(
     async def health():
         return {"ok": True}
 
+    # /health and /metrics are exempt from throttling (Sprint 11 G3·3), so the
+    # limit tests below drive a route that is actually subject to it.
+    @app.get("/api/throttled")
+    async def throttled():
+        return {"ok": True}
+
     @app.post("/api/erp/query")
     async def query(request: Request):
         return {"query": "ok"}
@@ -95,7 +101,7 @@ class TestUserRateLimit:
     def test_user_within_limit_passes(self):
         """First request from a fresh user_id returns 200."""
         client = TestClient(_make_app(), raise_server_exceptions=True)
-        r = client.get("/health", headers={"x-user-id": f"fresh-{time.monotonic()}"})
+        r = client.get("/api/throttled", headers={"x-user-id": f"fresh-{time.monotonic()}"})
         assert r.status_code == 200
 
     def test_user_at_limit_still_passes(self):
@@ -105,7 +111,7 @@ class TestUserRateLimit:
         _flood_user(uid, _USER_LIMIT_PER_MIN, uc)
         client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
         # next call brings count to limit+1 — this is the one that flips it
-        r = client.get("/health", headers={"x-user-id": uid})
+        r = client.get("/api/throttled", headers={"x-user-id": uid})
         assert r.status_code == 429
 
     def test_user_over_limit_returns_429(self):
@@ -114,7 +120,7 @@ class TestUserRateLimit:
         uc = _WindowCounter()
         _flood_user(uid, _USER_LIMIT_PER_MIN + 5, uc)
         client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
-        r = client.get("/health", headers={"x-user-id": uid})
+        r = client.get("/api/throttled", headers={"x-user-id": uid})
         assert r.status_code == 429
 
     def test_user_429_response_body(self):
@@ -123,7 +129,7 @@ class TestUserRateLimit:
         uc = _WindowCounter()
         _flood_user(uid, _USER_LIMIT_PER_MIN + 1, uc)
         client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
-        r = client.get("/health", headers={"x-user-id": uid})
+        r = client.get("/api/throttled", headers={"x-user-id": uid})
         assert r.json() == {"detail": "Rate limit exceeded (user)."}
 
     def test_user_429_retry_after_header(self):
@@ -132,7 +138,7 @@ class TestUserRateLimit:
         uc = _WindowCounter()
         _flood_user(uid, _USER_LIMIT_PER_MIN + 1, uc)
         client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
-        r = client.get("/health", headers={"x-user-id": uid})
+        r = client.get("/api/throttled", headers={"x-user-id": uid})
         assert r.headers.get("retry-after") == str(_WINDOW_SECONDS)
 
     def test_user_rate_limit_increments_middleware_violations(self):
@@ -142,7 +148,7 @@ class TestUserRateLimit:
         _flood_user(uid, _USER_LIMIT_PER_MIN + 1, uc)
         client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
         before = _read_violations("rate_limit_user")
-        client.get("/health", headers={"x-user-id": uid})
+        client.get("/api/throttled", headers={"x-user-id": uid})
         after = _read_violations("rate_limit_user")
         assert after > before
 
@@ -155,8 +161,8 @@ class TestUserRateLimit:
         _flood_user(limited_uid, _USER_LIMIT_PER_MIN + 5, uc)
         # clean_uid has no prior hits — same shared counter, but a different key
         client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
-        assert client.get("/health", headers={"x-user-id": limited_uid}).status_code == 429
-        assert client.get("/health", headers={"x-user-id": clean_uid}).status_code == 200
+        assert client.get("/api/throttled", headers={"x-user-id": limited_uid}).status_code == 429
+        assert client.get("/api/throttled", headers={"x-user-id": clean_uid}).status_code == 200
 
     def test_user_rate_limit_on_post_endpoint(self):
         """Rate limit applies to POST routes too, not just GET."""
@@ -179,7 +185,7 @@ class TestIPRateLimit:
         """First request from a fresh IP returns 200."""
         client = TestClient(_make_app(), raise_server_exceptions=True)
         ts = str(time.monotonic()).replace(".", "")
-        r = client.get("/health", headers={"x-forwarded-for": f"10.0.{ts[-3:-1]}.1"})
+        r = client.get("/api/throttled", headers={"x-forwarded-for": f"10.0.{ts[-3:-1]}.1"})
         assert r.status_code == 200
 
     def test_ip_over_limit_returns_429(self):
@@ -188,7 +194,7 @@ class TestIPRateLimit:
         ic = _WindowCounter()
         _flood_ip(unique_ip, _IP_LIMIT_PER_MIN + 5, ic)
         client = TestClient(_make_app(ip_counter=ic), raise_server_exceptions=False)
-        r = client.get("/health", headers={"x-forwarded-for": unique_ip})
+        r = client.get("/api/throttled", headers={"x-forwarded-for": unique_ip})
         assert r.status_code == 429
 
     def test_ip_429_response_body(self):
@@ -197,7 +203,7 @@ class TestIPRateLimit:
         ic = _WindowCounter()
         _flood_ip(unique_ip, _IP_LIMIT_PER_MIN + 1, ic)
         client = TestClient(_make_app(ip_counter=ic), raise_server_exceptions=False)
-        r = client.get("/health", headers={"x-forwarded-for": unique_ip})
+        r = client.get("/api/throttled", headers={"x-forwarded-for": unique_ip})
         assert r.json() == {"detail": "Rate limit exceeded (IP)."}
 
     def test_ip_429_retry_after_header(self):
@@ -206,7 +212,7 @@ class TestIPRateLimit:
         ic = _WindowCounter()
         _flood_ip(unique_ip, _IP_LIMIT_PER_MIN + 1, ic)
         client = TestClient(_make_app(ip_counter=ic), raise_server_exceptions=False)
-        r = client.get("/health", headers={"x-forwarded-for": unique_ip})
+        r = client.get("/api/throttled", headers={"x-forwarded-for": unique_ip})
         assert r.headers.get("retry-after") == str(_WINDOW_SECONDS)
 
     def test_ip_rate_limit_increments_middleware_violations(self):
@@ -216,7 +222,7 @@ class TestIPRateLimit:
         _flood_ip(unique_ip, _IP_LIMIT_PER_MIN + 1, ic)
         client = TestClient(_make_app(ip_counter=ic), raise_server_exceptions=False)
         before = _read_violations("rate_limit_ip")
-        client.get("/health", headers={"x-forwarded-for": unique_ip})
+        client.get("/api/throttled", headers={"x-forwarded-for": unique_ip})
         after = _read_violations("rate_limit_ip")
         assert after > before
 
@@ -228,7 +234,7 @@ class TestIPRateLimit:
         client = TestClient(_make_app(ip_counter=ic), raise_server_exceptions=False)
         # first IP in the chain is the flooded one
         r = client.get(
-            "/health",
+            "/api/throttled",
             headers={"x-forwarded-for": f"{unique_ip}, 8.8.8.8"},
         )
         assert r.status_code == 429
@@ -243,11 +249,11 @@ class TestIPRateLimit:
         # clean_ip has no hits in the shared counter
         client = TestClient(_make_app(ip_counter=ic), raise_server_exceptions=False)
         assert client.get(
-            "/health",
+            "/api/throttled",
             headers={"x-forwarded-for": limited_ip, "x-user-id": f"u-limited-{ts}"},
         ).status_code == 429
         assert client.get(
-            "/health",
+            "/api/throttled",
             headers={"x-forwarded-for": clean_ip, "x-user-id": f"u-clean-{ts}"},
         ).status_code == 200
 
@@ -255,6 +261,33 @@ class TestIPRateLimit:
 # ---------------------------------------------------------------------------
 # User limit takes precedence over IP limit
 # ---------------------------------------------------------------------------
+
+class TestOpsPathsAreExempt:
+    """Sprint 11 G3·3: /health and /metrics must never be throttled.
+
+    Every test above drives /api/throttled instead of /health for exactly this
+    reason — the ops paths are deliberately outside the limiter now.
+    """
+
+    def test_health_passes_even_when_the_user_is_far_over_limit(self):
+        uid = f"flooded-{int(time.monotonic() * 1000)}"
+        uc = _WindowCounter()
+        _flood_user(uid, _USER_LIMIT_PER_MIN * 5, uc)
+        client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
+
+        assert client.get("/health", headers={"x-user-id": uid}).status_code == 200
+
+    def test_a_normal_path_is_throttled_under_the_same_conditions(self):
+        """Guards the test above: it must pass because of the exemption."""
+        uid = f"flooded2-{int(time.monotonic() * 1000)}"
+        uc = _WindowCounter()
+        _flood_user(uid, _USER_LIMIT_PER_MIN * 5, uc)
+        client = TestClient(_make_app(user_counter=uc), raise_server_exceptions=False)
+
+        assert client.get(
+            "/api/throttled", headers={"x-user-id": uid}
+        ).status_code == 429
+
 
 class TestRateLimitPrecedence:
     """User limit is evaluated before IP limit."""
@@ -270,7 +303,7 @@ class TestRateLimitPrecedence:
         _flood_ip(unique_ip, _IP_LIMIT_PER_MIN + 1, ic)
         client = TestClient(_make_app(user_counter=uc, ip_counter=ic), raise_server_exceptions=False)
         r = client.get(
-            "/health",
+            "/api/throttled",
             headers={"x-user-id": uid, "x-forwarded-for": unique_ip},
         )
         assert r.status_code == 429

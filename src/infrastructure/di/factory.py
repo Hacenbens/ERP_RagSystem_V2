@@ -15,16 +15,22 @@ from src.domain.chunk import Chunk
 from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.llm_port import LLMPort
+from src.domain.ports.user_repository_port import UserRepositoryPort
 from src.domain.ports.vector_store_port import VectorStorePort
 from src.infrastructure.auth.jwt_handler import JWTHandler
-from src.infrastructure.auth.user_repository import InMemoryUserRepository
+from src.infrastructure.auth.user_repository import (
+    InMemoryUserRepository,
+    MongoUserRepository,
+)
 from src.infrastructure.di.container import DIContainer
 from src.infrastructure.persistence.chunk_store import InMemoryChunkStore, MongoChunkStore
 from src.infrastructure.rag.context_builder import ContextBuilder
 from src.infrastructure.rag.embedding_providers import NgrokEmbeddingProvider, NoopEmbeddingProvider
-from src.infrastructure.rag.reranker import IdentityReranker
+from src.infrastructure.rag.reranker import CrossEncoderReranker, IdentityReranker
 from src.infrastructure.rag.vector_retriever import VectorRetriever
+from src.domain.ports.asset_storage_port import AssetStoragePort
 from src.infrastructure.storage.local_asset_storage import LocalAssetStorage
+from src.infrastructure.storage.minio_asset_storage import MinioAssetStorage
 from src.infrastructure.workers.celery_job_dispatcher import CeleryJobDispatcher
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
 from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
@@ -127,14 +133,67 @@ def _select_embedder() -> EmbeddingPort:
     return NoopEmbeddingProvider()
 
 
+def _select_asset_storage() -> AssetStoragePort:
+    """Return MinioAssetStorage when MinIO is configured, else local files.
+
+    LocalAssetStorage writes to a filesystem path, and the API and worker each
+    have their own. An upload landed on one and the worker looked on the other
+    and found nothing — the B-4 storage-key failure at the container boundary.
+    A shared compose volume papers over that on a single host; an object store
+    is what survives more than one.
+    """
+    endpoint = os.environ.get("MINIO_ENDPOINT", "")
+    access_key = os.environ.get("MINIO_ACCESS_KEY", "")
+    if endpoint and access_key:
+        logger.info("factory.asset_storage.minio", endpoint=endpoint)
+        return MinioAssetStorage()
+    logger.warning(
+        "factory.asset_storage.local — set MINIO_ENDPOINT and MINIO_ACCESS_KEY "
+        "for storage the API and worker can share across hosts"
+    )
+    return LocalAssetStorage(
+        base_path=os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
+    )
+
+
+def _select_reranker() -> "IdentityReranker | CrossEncoderReranker":
+    """Return CrossEncoderReranker when a reranking service is configured.
+
+    IdentityReranker was hardcoded, so CrossEncoderReranker shipped written and
+    tested and was never constructed. Identity only re-sorts by the score the
+    vector store already returned, which makes the rerank stage a no-op: the
+    top-5 handed to the LLM are whichever five cosine similarity liked, with no
+    query-document interaction scoring at all.
+
+    Selecting the cross-encoder is safe even when the endpoint is flaky: it
+    falls back to IdentityReranker per call on any scoring failure, so a
+    reranker outage degrades ordering rather than the request.
+    """
+    if os.environ.get("NGROK_BASE_URL"):
+        logger.info("factory.reranker.cross_encoder_enabled")
+        return CrossEncoderReranker()
+    logger.warning(
+        "factory.reranker.identity — set NGROK_BASE_URL to enable cross-encoder "
+        "reranking; ordering is cosine similarity alone"
+    )
+    return IdentityReranker()
+
+
 def _select_vector_store(dim: int = 768) -> VectorStorePort:
-    """Return MilvusVectorStore when MILVUS_URI is set, else InMemoryVectorStore."""
-    uri = os.environ.get("MILVUS_URI", "")
+    """Return MilvusVectorStore when MILVUS_DB_URI is set, else InMemoryVectorStore.
+
+    Deliberately not MILVUS_URI: pymilvus reads a variable of that exact name
+    at import time and requires an http[s]:// address, so setting it to the
+    Milvus Lite file path the project documents killed the process with
+    ConnectionConfigException before any project code ran. Renaming ours ends
+    the collision.
+    """
+    uri = os.environ.get("MILVUS_DB_URI", "")
     if uri:
         logger.info("factory.vector_store.milvus_enabled", uri=uri)
         return MilvusVectorStore(uri=uri, dim=dim)
     logger.warning(
-        "factory.vector_store.in_memory — set MILVUS_URI for persistent vector search"
+        "factory.vector_store.in_memory — set MILVUS_DB_URI for persistent vector search"
     )
     return InMemoryVectorStore()
 
@@ -182,7 +241,7 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     vector_store = _select_vector_store()
     embedder = _select_embedder()
     retriever = VectorRetriever(store=vector_store, embedder=embedder)
-    reranker = IdentityReranker()
+    reranker = _select_reranker()
     context_builder = ContextBuilder()
 
     container.register("vector_store", vector_store)
@@ -240,8 +299,11 @@ def build_container() -> DIContainer:
     container = DIContainer()
 
     # --- Auth -----------------------------------------------------------
+    mongo_uri = os.environ.get("MONGODB_URI", "")
+    mongo_client = _connect_mongo(mongo_uri) if mongo_uri else None
+
     jwt_handler = JWTHandler()
-    user_repo = InMemoryUserRepository()
+    user_repo = _select_user_repository(mongo_client)
     auth_use_case = AuthUseCase(user_repository=user_repo, jwt_handler=jwt_handler)
 
     container.register("jwt_handler", jwt_handler)
@@ -252,13 +314,70 @@ def build_container() -> DIContainer:
     build_query_chain(container)
 
     # --- Ingestion ports (Sprint 7 Task 20/21) -------------------------
-    asset_storage_path = os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
-    container.register("asset_storage", LocalAssetStorage(base_path=asset_storage_path))
+    container.register("asset_storage", _select_asset_storage())
     container.register("job_dispatcher", CeleryJobDispatcher())
 
     # Validate before returning — app must not start with unbound ports
     container.validate()
     return container
+
+
+class MongoUnavailableError(RuntimeError):
+    """Raised when MONGODB_URI is set but the server cannot be reached."""
+
+
+def _select_user_repository(client: "Any | None") -> UserRepositoryPort:
+    """Return MongoUserRepository when a database is available, else in-memory.
+
+    Takes an already-connected client rather than a URI so a container opens
+    one connection and probes it once, instead of one per store.
+
+    An in-memory repository holds a separate table per process, so a user
+    registered against one uvicorn worker did not exist for the next request
+    served by another, and every account vanished on restart.
+    """
+    if client is not None:
+        logger.info("factory.user_repository.mongo")
+        return MongoUserRepository(client["erp_rag"]["users"])
+    logger.warning(
+        "factory.user_repository.in_memory — accounts are lost on restart and "
+        "are not shared between processes; set MONGODB_URI to persist them"
+    )
+    return InMemoryUserRepository()
+
+
+def _connect_mongo(mongo_uri: str) -> "Any":
+    """Return a MongoClient, having proved the server answers.
+
+    pymongo connects lazily, so MongoClient(uri) succeeds against a wrong
+    host, a wrong port and wrong credentials alike. The worker container
+    therefore built cleanly and every task failed later at runtime — with
+    `OperationFailure: Command delete requires authentication` for an
+    uncredentialed URI — which is the opposite of the fail-fast the DI
+    container exists to provide.
+
+    The probe reads the erp_rag database rather than pinging admin. A ping
+    answers without authentication on a server that then rejects every real
+    operation, so it would have reported this exact misconfiguration as
+    healthy. listCollections needs the same authentication the worker's reads
+    and writes need, which is what has to be proven here.
+    """
+    import pymongo  # type: ignore
+    from pymongo.errors import PyMongoError  # type: ignore
+
+    client: Any = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5_000)
+    try:
+        client["erp_rag"].list_collection_names()
+    except PyMongoError as exc:
+        raise MongoUnavailableError(
+            f"MONGODB_URI is set but the server did not answer: {exc}. "
+            "Check the host, and include credentials if the server requires "
+            "auth (mongodb://user:password@host:27017/?authSource=admin). "
+            "Leave MONGODB_URI blank to run with in-memory stores."
+        ) from exc
+
+    logger.info("factory.mongo.connected", database="erp_rag")
+    return client
 
 
 def build_worker_container() -> DIContainer:
@@ -276,8 +395,11 @@ def build_worker_container() -> DIContainer:
     container = DIContainer()
 
     # --- Auth (shared with API process) ----------------------------------
+    mongo_uri = os.environ.get("MONGODB_URI", "")
+    mongo_client = _connect_mongo(mongo_uri) if mongo_uri else None
+
     jwt_handler = JWTHandler()
-    user_repo = InMemoryUserRepository()
+    user_repo = _select_user_repository(mongo_client)
     auth_use_case = AuthUseCase(user_repository=user_repo, jwt_handler=jwt_handler)
 
     container.register("jwt_handler", jwt_handler)
@@ -285,30 +407,25 @@ def build_worker_container() -> DIContainer:
     container.register("auth_use_case", auth_use_case)
 
     # --- Worker dependencies ---------------------------------------------
-    mongo_uri = os.environ.get("MONGODB_URI", "")
-    asset_storage_path = os.environ.get("ASSET_STORAGE_PATH", "/tmp/erp_rag_assets")
-
     dead_letter_repo: InMemoryDeadLetterRepository | MongoDeadLetterRepository
     idempotency_store: InMemoryIdempotencyStore | MongoIdempotencyStore
     chunk_store: InMemoryChunkStore | MongoChunkStore
 
-    if mongo_uri:
-        import pymongo  # type: ignore
-        client: Any = pymongo.MongoClient(mongo_uri)
+    if mongo_client is not None:
         dead_letter_repo = MongoDeadLetterRepository(
-            client["erp_rag"]["failed_tasks"]
+            mongo_client["erp_rag"]["failed_tasks"]
         )
         idempotency_store = MongoIdempotencyStore(
-            client["erp_rag"]["processed_assets"]
+            mongo_client["erp_rag"]["processed_assets"]
         )
-        chunk_store = MongoChunkStore(client["erp_rag"]["chunks"])
+        chunk_store = MongoChunkStore(mongo_client["erp_rag"]["chunks"])
     else:
         dead_letter_repo = InMemoryDeadLetterRepository()
         idempotency_store = InMemoryIdempotencyStore()
         chunk_store = InMemoryChunkStore()
 
     vector_store = _select_vector_store()
-    asset_storage = LocalAssetStorage(base_path=asset_storage_path)
+    asset_storage = _select_asset_storage()
     embedding_port = _select_embedder()
 
     _chunker_factory = ChunkerFactory()
@@ -369,4 +486,9 @@ def get_worker_container() -> DIContainer:
     return _worker_container
 
 
-__all__ = ["build_container", "build_worker_container", "get_worker_container"]
+__all__ = [
+    "build_container",
+    "build_worker_container",
+    "get_worker_container",
+    "MongoUnavailableError",
+]

@@ -64,25 +64,32 @@ def _check_patterns(sql: str, patterns: list[str]) -> list[str]:
     return [p for p in patterns if p.upper() not in sql_upper]
 
 
+# Which path generate_sql() last took. Printed in the report so a number is
+# never read as a real measurement when it came from the keyword map.
+LAST_SOURCE: str = "not run"
+
+
 def _has_tenant_filter(sql: str) -> bool:
     return bool(re.search(r"tenant_id\s*=", sql, re.IGNORECASE))
 
 
 def generate_sql(nl_query: str) -> str:
-    """
-    Call the SQL pipeline Stage 1 (query_generator).
-    In offline/test mode this is a stub — replace with real pipeline call
-    when ERP PG test instance is available.
-    """
-    # Attempt to import and use the real generator
-    try:
-        from src.infrastructure.erp.query_generator import QueryGenerator  # type: ignore
-        generator = QueryGenerator()
-        return generator.generate(nl_query).raw_sql
-    except ImportError:
-        pass
+    """Generate SQL for *nl_query* through the real Stage 1 generator.
 
-    # Offline stub: produce a plausible SELECT for pattern matching
+    Records which path ran in ``LAST_SOURCE`` so the report can say whether it
+    measured anything real. QueryGenerator itself falls back to a deterministic
+    keyword map when no LLM is configured, and reports that on the result, so
+    the distinction is read from ``used_fallback`` rather than guessed.
+    """
+    global LAST_SOURCE
+    try:
+        from src.infrastructure.erp.query_generator import QueryGenerator
+        generated = QueryGenerator().generate(nl_query)
+        LAST_SOURCE = "offline generator" if generated.used_fallback else "LLM pipeline"
+        return generated.raw_sql
+    except Exception as exc:  # noqa: BLE001 — a benchmark must not crash the gate
+        LAST_SOURCE = f"stub ({type(exc).__name__})"
+
     return _offline_stub_sql(nl_query)
 
 
@@ -215,6 +222,13 @@ def print_report(report: BenchmarkReport) -> None:
     print(f"  Success rate: {report.success_rate:.2%}  (min required: {report.threshold:.2%})")
     gate = "PASS" if report.success_rate >= report.threshold else "FAIL"
     print(f"  CI gate:      {gate}")
+    print(f"  Measured:     {LAST_SOURCE}")
+    if LAST_SOURCE != "LLM pipeline":
+        print(
+            "  NOTE: these numbers score the offline keyword generator, not the\n"
+            "        SQL pipeline. They say nothing about generation quality\n"
+            "        until an LLM provider is configured."
+        )
     print("=" * 60 + "\n")
 
 

@@ -10,16 +10,20 @@
 #   redis      — Celery broker + result backend
 #   prometheus — Metrics scraper (scrapes app:8000/metrics)
 #
-# Usage:
-#   docker-compose -f docker/docker-compose.yaml up -d
-#   docker-compose -f docker/docker-compose.yaml logs -f app
-#   docker-compose -f docker/docker-compose.yaml down -v
+# Usage (from the repository root):
+#   docker compose -f docker/docker-compose.yaml up -d
+#   docker compose -f docker/docker-compose.yaml logs -f app
+#   docker compose -f docker/docker-compose.yaml down -v
 #
 # Environment:
-#   Copy .env.example to .env and fill in secrets before starting.
+#   Copy .env.example to .env at the repository root and fill in secrets.
 #   Never commit a populated .env file.
-
-version: "3.9"
+#
+#   Compose resolves ${VAR} against a .env sitting next to THIS file, not the
+#   repository root, so the app and worker services declare `env_file: ../.env`
+#   to load the project's own. It is marked optional so the stack still starts
+#   from a fresh clone with no .env yet — services then fall back to the
+#   in-memory and synthetic paths rather than failing to start.
 
 # ---------------------------------------------------------------------------
 # Shared network — all services communicate over this bridge
@@ -32,6 +36,11 @@ networks:
 # Named volumes — survive container restarts
 # ---------------------------------------------------------------------------
 volumes:
+  # Uploads land on the API container and are read by the worker. Without a
+  # shared volume the worker looks on its own disk and finds nothing, which is
+  # the B-4 storage-key failure reproduced at the container boundary. A real
+  # object store (MinIO) removes the need for this.
+  asset_data:
   mongodb_data:
   milvus_data:
   etcd_data:
@@ -55,16 +64,26 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    env_file:
+      - path: ../.env
+        required: false
+    # Only the values that must differ inside the network. Everything else —
+    # GEMINI_API_KEY, NGROK_*, JWT_*, ERP_PG_*, MINIO_* — arrives from
+    # ../.env via env_file above. Listing them here as ${VAR} would be worse
+    # than useless: Compose substitutes those against a .env next to this
+    # file, finds nothing, and sets them to "" — overriding the real values
+    # env_file just supplied.
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Service names, not localhost.
+      MONGODB_URI: mongodb://mongodb:27017
+      # Deliberately MILVUS_DB_URI, not MILVUS_URI: pymilvus claims that name
+      # at import and rejects anything that is not an http[s] address.
+      MILVUS_DB_URI: http://milvus:19530
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_ENDPOINT: minio:9000
+      ASSET_STORAGE_PATH: /var/lib/erp_rag/assets
     depends_on:
       mongodb:
         condition: service_healthy
@@ -72,6 +91,8 @@ services:
         condition: service_healthy
       milvus:
         condition: service_started
+    volumes:
+      - asset_data:/var/lib/erp_rag/assets
     networks:
       - erp_rag_net
     healthcheck:
@@ -90,19 +111,32 @@ services:
       dockerfile: docker/Dockerfile
     container_name: erp_rag_worker
     restart: unless-stopped
-    command: celery -A src.workers.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A src.infrastructure.workers.celery_app worker --loglevel=info --concurrency=4
+    env_file:
+      - path: ../.env
+        required: false
+    # Only the values that must differ inside the network. Everything else —
+    # GEMINI_API_KEY, NGROK_*, JWT_*, ERP_PG_*, MINIO_* — arrives from
+    # ../.env via env_file above. Listing them here as ${VAR} would be worse
+    # than useless: Compose substitutes those against a .env next to this
+    # file, finds nothing, and sets them to "" — overriding the real values
+    # env_file just supplied.
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
-      - REDIS_URL=redis://redis:6379/0
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Service names, not localhost.
+      MONGODB_URI: mongodb://mongodb:27017
+      # Deliberately MILVUS_DB_URI, not MILVUS_URI: pymilvus claims that name
+      # at import and rejects anything that is not an http[s] address.
+      MILVUS_DB_URI: http://milvus:19530
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_ENDPOINT: minio:9000
+      ASSET_STORAGE_PATH: /var/lib/erp_rag/assets
     depends_on:
       - redis
       - mongodb
+    volumes:
+      - asset_data:/var/lib/erp_rag/assets
     networks:
       - erp_rag_net
 

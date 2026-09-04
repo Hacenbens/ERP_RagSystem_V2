@@ -52,29 +52,49 @@ class RAGBenchmarkReport:
     threshold: float
 
 
+# Which path retrieve_chunks() last took: "pipeline" or a "stub (...)" reason.
+# The report prints it, so a number can never again be read as a real
+# measurement when it came from the keyword map.
+LAST_SOURCE: str = "not run"
+
+
 def load_test_cases() -> list[RAGTestCase]:
     with open(DATA_FILE) as f:
         raw = json.load(f)
     return [RAGTestCase(**item) for item in raw]
 
 
-def retrieve_chunks(query: str, top_k: int = 5) -> list[str]:
-    """
-    Call the RAG retrieval pipeline.
-    Returns a list of chunk IDs (top_k results).
-    Falls back to empty list when vector store is unavailable.
-    """
-    try:
-        from src.infrastructure.vector_store.milvus_retriever import MilvusRetriever  # type: ignore
-        retriever = MilvusRetriever()
-        results = retriever.search(query, top_k=top_k)
-        return [r.chunk_id for r in results]
-    except ImportError:
-        pass
-    except Exception:
-        pass
+def retrieve_chunks(query: str, top_k: int = 5, tenant_id: str = "benchmark") -> list[str]:
+    """Retrieve chunk ids for *query* through the real RAG pipeline.
 
-    # Offline stub: simulate partial retrieval based on keyword overlap
+    Falls back to the offline stub only when retrieval is genuinely
+    unavailable, and records which path ran in ``LAST_SOURCE`` so the report
+    can say whether it measured anything real.
+
+    This used to import ``vector_store.milvus_retriever`` — a module that has
+    never existed — inside a bare ``except ImportError: pass``. The import
+    failed on every run, the stub answered instead, and the benchmark scored
+    its own keyword map against the golden set while presenting the number as
+    a retrieval quality gate.
+    """
+    global LAST_SOURCE
+    try:
+        from src.infrastructure.di.factory import _select_embedder, _select_vector_store
+        from src.infrastructure.rag.vector_retriever import VectorRetriever
+
+        retriever = VectorRetriever(store=_select_vector_store(), embedder=_select_embedder())
+        results = retriever.retrieve(query, k=top_k, tenant_id=tenant_id)
+        if results:
+            LAST_SOURCE = "pipeline"
+            return [chunk.chunk_id for chunk in results]
+        # An empty result is not a pipeline failure — it usually means no
+        # documents are indexed for this tenant yet, or embeddings are down
+        # (VectorRetriever returns [] rather than raising). Either way there
+        # is nothing real to score.
+        LAST_SOURCE = "stub (retrieval returned nothing)"
+    except Exception as exc:  # noqa: BLE001 — a benchmark must not crash the gate
+        LAST_SOURCE = f"stub ({type(exc).__name__})"
+
     return _offline_stub_retrieve(query, top_k)
 
 
@@ -196,6 +216,13 @@ def print_report(report: RAGBenchmarkReport) -> None:
     )
     gate = "PASS" if report.mean_precision_at_5 >= report.threshold else "FAIL"
     print(f"  CI gate:        {gate}")
+    print(f"  Measured:       {LAST_SOURCE}")
+    if not LAST_SOURCE.startswith("pipeline"):
+        print(
+            "  NOTE: these numbers score the offline keyword stub, not the RAG\n"
+            "        pipeline. They say nothing about retrieval quality until an\n"
+            "        embedding service and an indexed vector store are available."
+        )
     print("=" * 60 + "\n")
 
 
