@@ -146,10 +146,30 @@ class TestTenantFilterRule:
         assert not report.is_valid
         assert any("tenant_id" in e for e in report.errors)
 
-    def test_tenant_filter_with_literal_value(self, validator):
+    def test_tenant_filter_with_literal_value_is_rejected(self, validator):
+        """A hardcoded tenant is a cross-tenant leak, not a tenant filter.
+
+        Stage 3 binds params={"tenant_id": <caller's claim>}. A literal ignores
+        that binding, so this SQL executed for a caller authenticated as one
+        tenant returns another tenant's rows — demonstrated against a real
+        database before this rule was tightened.
+        """
         sql = "SELECT * FROM sales_orders WHERE tenant_id = 'FERZA'"
         report = validator.validate(sql)
-        assert report.has_tenant_filter is True
+
+        assert report.has_tenant_filter is False
+        assert report.can_execute is False
+
+    def test_a_literal_tenant_is_reported_as_such(self, validator):
+        """The fix differs from a missing filter, so the message must too."""
+        report = validator.validate("SELECT * FROM t WHERE tenant_id = 'acme'")
+
+        assert any("literal" in e.lower() for e in report.errors)
+
+    def test_bound_parameter_is_the_only_accepted_form(self, validator):
+        assert validator.validate(
+            "SELECT * FROM t WHERE tenant_id = :tenant_id"
+        ).has_tenant_filter is True
 
     def test_tenant_filter_case_insensitive(self, validator):
         sql = "SELECT * FROM t WHERE TENANT_ID = :tenant_id"

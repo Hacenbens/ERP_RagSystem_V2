@@ -59,8 +59,24 @@ _INJECTION_PATTERNS: tuple[str, ...] = (
     r"PG_READ_FILE\s*\(",              # PostgreSQL file read
 )
 
+# Only a BOUND parameter satisfies tenant isolation. A quoted literal used to
+# count, which meant SQL carrying `tenant_id = 'acme'` passed validation and
+# executed for a caller authenticated as ferza — the executor binds
+# params={"tenant_id": "ferza"}, but a literal ignores the binding entirely and
+# the caller received the other tenant's rows.
+#
+# That was latent while the offline generator always emitted :tenant_id. The
+# sql_generator prompt instructs the model to write the tenant as a literal, so
+# connecting an LLM generator is exactly what would have activated it.
 _TENANT_FILTER_PATTERN = re.compile(
-    r"tenant_id\s*=\s*[:$]tenant_id|tenant_id\s*=\s*'[^']+'",
+    r"tenant_id\s*=\s*[:$]tenant_id",
+    re.IGNORECASE,
+)
+
+# A literal tenant is reported separately from a missing one: the fix is
+# different, and "you hardcoded a tenant" is worth saying out loud.
+_LITERAL_TENANT_PATTERN = re.compile(
+    r"tenant_id\s*=\s*'[^']*'",
     re.IGNORECASE,
 )
 
@@ -117,10 +133,18 @@ class QueryValidator:
         # --- Rule 4: tenant_id filter (CRITICAL) ------------------------------
         has_tenant = bool(_TENANT_FILTER_PATTERN.search(raw_sql))
         if not has_tenant:
-            errors.append(
-                "Missing tenant_id filter. All ERP queries MUST include "
-                "WHERE tenant_id = :tenant_id to enforce tenant isolation."
-            )
+            if _LITERAL_TENANT_PATTERN.search(raw_sql):
+                errors.append(
+                    "tenant_id is filtered by a hardcoded literal. It must be "
+                    "the bound parameter :tenant_id, which Stage 3 fills from "
+                    "the authenticated caller's claims — a literal ignores that "
+                    "binding and can return another tenant's rows."
+                )
+            else:
+                errors.append(
+                    "Missing tenant_id filter. All ERP queries MUST include "
+                    "WHERE tenant_id = :tenant_id to enforce tenant isolation."
+                )
 
         # --- Rule 5: No wildcard SELECT * on joins ----------------------------
         if re.search(r"SELECT\s+\*", raw_sql, re.IGNORECASE) and re.search(

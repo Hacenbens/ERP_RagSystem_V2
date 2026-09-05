@@ -256,7 +256,7 @@ class TestSqlGeneratorPrompt:
     ) -> None:
         pv = registry.resolve("sql_generator", "production")
         valid = {
-            "sql": "SELECT id FROM invoices WHERE tenant_id = 'acme'",
+            "sql": "SELECT id FROM invoices WHERE tenant_id = :tenant_id",
             "tables_used": ["invoices"],
             "confidence": 0.95,
         }
@@ -283,7 +283,7 @@ class TestSqlGeneratorPrompt:
     ) -> None:
         pv = registry.resolve("sql_generator", "production")
         bad = {
-            "sql": "SELECT id FROM invoices WHERE tenant_id = 'acme'",
+            "sql": "SELECT id FROM invoices WHERE tenant_id = :tenant_id",
             "tables_used": ["invoices"],
             "confidence": 1.5,
         }
