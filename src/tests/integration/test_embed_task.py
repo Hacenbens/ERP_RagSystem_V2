@@ -83,6 +83,9 @@ class _SeedChunkStore(ChunkStorePort):
     def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
         return 0
 
+    def list_assets(self) -> list:
+        return []
+
 
 class _FailingChunkStore(ChunkStorePort):
     """Raises RuntimeError on every find_by_asset call — counts invocations."""
@@ -100,6 +103,9 @@ class _FailingChunkStore(ChunkStorePort):
 
     def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
         return 0
+
+    def list_assets(self) -> list:
+        return []
 
 
 class _TransientFailingChunkStore(ChunkStorePort):
@@ -120,6 +126,9 @@ class _TransientFailingChunkStore(ChunkStorePort):
 
     def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
         return 0
+
+    def list_assets(self) -> list:
+        return []
 
 
 class _FailingEmbeddingPort(EmbeddingPort):

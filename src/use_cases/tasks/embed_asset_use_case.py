@@ -52,14 +52,23 @@ class EmbedAssetUseCase:
         tenant_id: str,
         chunk_strategy: str,
         task_id: str,
+        force: bool = False,
     ) -> EmbedResult:
         """Embed all chunks for ``asset_id`` / ``tenant_id``.
 
+        Args:
+            force: embed even if a completion marker already exists. The guard
+                exists so a re-delivered Celery message does not redo finished
+                work; a reconciliation run wants exactly the opposite, because
+                it has already established that the recorded vectors disagree
+                with the chunks. Upserts are keyed by chunk_id, so a forced run
+                converges on the same records rather than duplicating them.
+
         Raises:
-            AssetAlreadyEmbeddedError: vectors already exist for this asset.
+            AssetAlreadyEmbeddedError: vectors already exist and force is False.
             Any exception from EmbeddingPort propagates — no partial upserts.
         """
-        if self._vector_store.has_vectors(asset_id, tenant_id):
+        if not force and self._vector_store.has_vectors(asset_id, tenant_id):
             logger.info(
                 "embed_use_case.skip_duplicate",
                 asset_id=asset_id,

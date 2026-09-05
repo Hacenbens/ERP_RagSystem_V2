@@ -31,6 +31,9 @@ _ENTRY_POINTS = {
     "erp_rag_claude_code/scripts/read_docs.py",
     "erp_rag_claude_code/scripts/sprint_status.py",
     "erp_rag_claude_code/scripts/start_session.py",
+    # Operator command, run by hand or from a deploy gate:
+    #   python -m src.infrastructure.cli.reembed --dry-run
+    "src/infrastructure/cli/reembed.py",
 }
 
 

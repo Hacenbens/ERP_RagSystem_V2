@@ -108,6 +108,9 @@ class _StubChunkStore(ChunkStorePort):
     def delete_by_asset(self, asset_id, tenant_id):
         return 0
 
+    def list_assets(self):
+        return []
+
 
 class _FailingChunkStore(ChunkStorePort):
     def save_chunks(self, asset_id, tenant_id, chunks):
@@ -116,6 +119,9 @@ class _FailingChunkStore(ChunkStorePort):
         raise RuntimeError("fail")
     def delete_by_asset(self, asset_id, tenant_id):
         return 0
+
+    def list_assets(self):
+        return []
 
 
 class _StubEmbeddingPort(EmbeddingPort):
