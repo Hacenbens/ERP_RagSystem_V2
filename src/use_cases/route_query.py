@@ -19,6 +19,7 @@ from src.domain.ports.query_classifier_port import QueryClassifierPort
 from src.domain.query_intent import QueryIntent
 from src.domain.user_role import UserRole
 from src.infrastructure.auth.jwt_handler import TokenClaims
+from src.observability.stage_timer import Stage, stage_timer
 from src.observability.structured_logger import get_logger
 from src.use_cases.run_hybrid import RunHybridUseCase
 from src.use_cases.run_rag import RunRAGUseCase
@@ -61,12 +62,14 @@ class RouteQueryUseCase:
         user: TokenClaims,
     ) -> RouteResult:
         """Route query to the appropriate agent and return its result."""
-        decision = self._classifier.classify(query)
+        with stage_timer(Stage.CLASSIFY) as timing:
+            decision = self._classifier.classify(query)
 
         logger.info(
             "route_query.classified",
             intent=decision.intent,
             confidence=decision.confidence,
+            latency_ms=round(timing.elapsed_ms, 2),
             erp_module=str(decision.erp_module) if decision.erp_module else None,
             role=user.role,
             tenant_id=user.tenant_id,

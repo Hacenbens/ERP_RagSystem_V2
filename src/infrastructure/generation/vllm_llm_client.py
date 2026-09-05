@@ -14,6 +14,7 @@ import os
 import httpx
 
 from src.domain.ports.llm_port import LLMPort
+from src.observability.stage_timer import record_tokens
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -105,10 +106,16 @@ class vLLMLLMClient(LLMPort):
             response.raise_for_status()
             data = response.json()
             answer: str = data["choices"][0]["message"]["content"] or ""
+            usage = data.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            record_tokens("vllm", prompt_tokens, completion_tokens)
             logger.info(
                 "vllm_llm.complete.done",
                 model=self._model,
                 answer_len=len(answer),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             )
             return answer
 

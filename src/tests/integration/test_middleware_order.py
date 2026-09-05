@@ -10,7 +10,7 @@ Acceptance criteria:
     the SQL pipeline route handler is never called.
   - A valid, permitted request → route handler IS called and returns 200
     (proves the gate is the middleware, not a misconfigured route).
-  - SQL_STAGE1_LATENCY and SQL_STAGE3_ROWS Prometheus metrics do not change
+  - the sql_generate stage latency and SQL_STAGE3_ROWS metrics do not change
     when Auth or RBAC blocks the request.
 
 Stack under test (add_middleware LIFO → request traversal order):
@@ -38,7 +38,8 @@ from src.infrastructure.auth.user_repository import InMemoryUserRepository
 from src.infrastructure.di.container import DIContainer
 from src.middleware.AuthMiddleware import AuthMiddleware
 from src.middleware.RBACMiddleware import RBACMiddleware
-from src.observability.prometheus_metrics import SQL_STAGE1_LATENCY, SQL_STAGE3_ROWS
+from src.observability.prometheus_metrics import QUERY_STAGE_LATENCY_MS, SQL_STAGE3_ROWS
+from src.observability.stage_timer import Stage
 from src.tests.fixtures.jwt_fixtures import (
     make_expired_token,
     make_jwt_handler,
@@ -63,11 +64,14 @@ _sql_handler_calls: list[str] = []
 # ---------------------------------------------------------------------------
 
 def _sql_stage1_sample_count() -> float:
-    """Return the current _count sample of SQL_STAGE1_LATENCY (increments on every observe())."""
+    """Observation count for the sql_generate stage (rises on every observe())."""
     for m in REGISTRY.collect():
-        if m.name == "erp_rag_sql_stage1_latency_seconds":
+        if m.name == "erp_rag_query_stage_latency_ms":
             for s in m.samples:
-                if s.name == "erp_rag_sql_stage1_latency_seconds_count":
+                if (
+                    s.name == "erp_rag_query_stage_latency_ms_count"
+                    and s.labels.get("stage") == Stage.SQL_GENERATE.value
+                ):
                     return s.value
     return 0.0
 
@@ -91,7 +95,7 @@ def _build_app(jwt_handler) -> FastAPI:
 
     The /api/erp/query handler simulates what the SQL pipeline would do:
       - appends a sentinel entry to _sql_handler_calls
-      - observes both SQL_STAGE1_LATENCY and SQL_STAGE3_ROWS
+      - observes both the sql_generate stage latency and SQL_STAGE3_ROWS
 
     If either middleware blocks the request, the handler is never reached,
     so _sql_handler_calls stays empty and the metrics stay flat.
@@ -118,7 +122,7 @@ def _build_app(jwt_handler) -> FastAPI:
         """Simulated SQL pipeline entry point."""
         _sql_handler_calls.append(request.state.user_id)
         # Simulate Stage 1 and Stage 3 metric observations
-        SQL_STAGE1_LATENCY.observe(0.05)
+        QUERY_STAGE_LATENCY_MS.labels(stage=Stage.SQL_GENERATE.value).observe(50.0)
         SQL_STAGE3_ROWS.observe(2)
         return {"result": "ok", "rows": 2}
 
@@ -214,7 +218,7 @@ class TestAuthBlockNeverReachesSQLHandler:
 
 
 class TestAuthBlockDoesNotIncrementSQLMetrics:
-    """SQL_STAGE1_LATENCY and SQL_STAGE3_ROWS must stay flat when Auth blocks."""
+    """Stage latency and SQL_STAGE3_ROWS must stay flat when Auth blocks."""
 
     def test_missing_token_sql_stage1_metric_unchanged(self, client):
         before = _sql_stage1_sample_count()

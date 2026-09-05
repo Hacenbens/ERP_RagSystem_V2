@@ -22,11 +22,28 @@ from google import genai
 from google.genai import types
 
 from src.domain.ports.llm_port import LLMPort
+from src.observability.stage_timer import record_tokens
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
 _DEFAULT_MODEL = "gemini-3.5-flash-lite"
+
+
+def _usage(response: object) -> tuple[int | None, int | None]:
+    """Read the token counts Gemini reported, or (None, None) if it did not.
+
+    Every field is optional in the SDK's own typing, and the shape has moved
+    between versions, so this reads defensively rather than indexing. None
+    means "not reported" — recording it as 0 would claim a free call.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return None, None
+    return (
+        getattr(usage, "prompt_token_count", None),
+        getattr(usage, "candidates_token_count", None),
+    )
 
 
 class GeminiLLMClient(LLMPort):
@@ -90,10 +107,14 @@ class GeminiLLMClient(LLMPort):
                 ),
             )
             answer: str = response.text or ""
+            prompt_tokens, completion_tokens = _usage(response)
+            record_tokens("gemini", prompt_tokens, completion_tokens)
             logger.info(
                 "gemini_llm.complete.done",
                 model=self._model,
                 answer_len=len(answer),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             )
             return answer
 

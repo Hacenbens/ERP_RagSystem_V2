@@ -86,11 +86,13 @@ class TestQueryGeneratorOffline:
         from prometheus_client import REGISTRY
         before = sum(
             s.value for m in REGISTRY.collect() for s in m.samples
-            if s.name == "erp_rag_sql_stage1_latency_seconds_count"
+            if s.name == "erp_rag_query_stage_latency_ms_count"
+            and s.labels.get("stage") == "sql_generate"
         )
         generator.generate("Show all employees in HR")
         after = sum(
             s.value for m in REGISTRY.collect() for s in m.samples
-            if s.name == "erp_rag_sql_stage1_latency_seconds_count"
+            if s.name == "erp_rag_query_stage_latency_ms_count"
+            and s.labels.get("stage") == "sql_generate"
         )
         assert after > before

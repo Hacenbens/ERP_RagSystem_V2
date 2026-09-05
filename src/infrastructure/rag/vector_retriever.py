@@ -4,6 +4,7 @@ from src.domain.exceptions import EmbeddingUnavailableError
 from src.domain.models.scored_chunk import ScoredChunk
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.domain.ports.vector_store_port import VectorStorePort
+from src.observability.stage_timer import Stage, stage_timer
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,27 +38,29 @@ class VectorRetriever:
             erp_module=erp_module,
             k=k,
         )
-        try:
-            embedding = self._embedder.embed(query)
-        except EmbeddingUnavailableError as exc:
-            logger.error(
-                "rag.retriever.embedding_unavailable",
+        with stage_timer(Stage.RETRIEVE) as timing:
+            try:
+                embedding = self._embedder.embed(query)
+            except EmbeddingUnavailableError as exc:
+                logger.error(
+                    "rag.retriever.embedding_unavailable",
+                    tenant_id=tenant_id,
+                    erp_module=erp_module,
+                    error=str(exc),
+                )
+                return []
+            chunks = self._store.search_similar(
+                query_embedding=embedding,
+                k=k,
                 tenant_id=tenant_id,
                 erp_module=erp_module,
-                error=str(exc),
             )
-            return []
-        chunks = self._store.search_similar(
-            query_embedding=embedding,
-            k=k,
-            tenant_id=tenant_id,
-            erp_module=erp_module,
-        )
         logger.info(
             "rag.retriever.done",
             tenant_id=tenant_id,
             erp_module=erp_module,
             chunk_count=len(chunks),
+            latency_ms=round(timing.elapsed_ms, 2),
         )
         return chunks
 

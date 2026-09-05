@@ -22,12 +22,12 @@ Which is why every result records ``used_fallback``, and the caller surfaces it.
 from __future__ import annotations
 
 import re
-import time
 from dataclasses import dataclass
 
 from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.generation.llm_json import parse_llm_json
-from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS, SQL_STAGE1_LATENCY
+from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS
+from src.observability.stage_timer import Stage, stage_timer
 from src.observability.structured_logger import get_logger
 from src.infrastructure.erp.schema_provider import ErpSchemaProvider
 from src.prompts.registry import PromptRegistry
@@ -178,38 +178,36 @@ class QueryGenerator:
         Stage 3 from the caller's claims. ``tenant_id`` here is passed to the
         model as context only — never interpolated into the statement.
         """
-        t0 = time.perf_counter()
         sql: str | None = None
         model_name = "offline"
 
-        if self._llm is not None and self._registry is not None:
-            try:
-                sql, model_name = self._llm_generate(nl_query, tenant_id, erp_module)
-            except Exception as exc:
-                SQL_PIPELINE_ERRORS.labels(stage="stage1").inc()
-                logger.warning(
-                    "sql.stage1.llm_fallback",
-                    error_type=type(exc).__name__,
-                    reason=str(exc)[:200],
-                )
+        with stage_timer(Stage.SQL_GENERATE) as timing:
+            if self._llm is not None and self._registry is not None:
+                try:
+                    sql, model_name = self._llm_generate(nl_query, tenant_id, erp_module)
+                except Exception as exc:
+                    SQL_PIPELINE_ERRORS.labels(stage="stage1").inc()
+                    logger.warning(
+                        "sql.stage1.llm_fallback",
+                        error_type=type(exc).__name__,
+                        reason=str(exc)[:200],
+                    )
 
-        used_fallback = sql is None
-        if sql is None:
-            sql = _offline_generate(nl_query)
-            model_name = "offline"
+            used_fallback = sql is None
+            if sql is None:
+                sql = _offline_generate(nl_query)
+                model_name = "offline"
 
-        latency_ms = (time.perf_counter() - t0) * 1000
-        SQL_STAGE1_LATENCY.observe(latency_ms / 1000)
         logger.info(
             "sql.stage1.generated",
             used_fallback=used_fallback,
             model=model_name,
-            latency_ms=round(latency_ms, 2),
+            latency_ms=round(timing.elapsed_ms, 2),
         )
         return GeneratedSQL(
             nl_query=nl_query,
             raw_sql=sql,
-            latency_ms=latency_ms,
+            latency_ms=timing.elapsed_ms,
             model=model_name,
             used_fallback=used_fallback,
         )

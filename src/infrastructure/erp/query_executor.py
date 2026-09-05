@@ -14,7 +14,6 @@ Falls back to InMemoryExecutor when PG_HOST is unavailable (tests / CI).
 from __future__ import annotations
 
 import re
-import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
@@ -26,6 +25,7 @@ from src.infrastructure.erp.query_log_repository import (
     QueryLogEntry,
 )
 from src.infrastructure.erp.query_validator import ValidationReport
+from src.observability.stage_timer import Stage, Timing, stage_timer
 from src.observability.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -267,14 +267,29 @@ class QueryExecutor:
             )
 
         query_id = str(uuid4())
-        t0 = time.perf_counter()
 
+        with stage_timer(Stage.SQL_EXECUTE) as timing:
+            result = self._run(report, tenant_id, query_id, timing)
+        return result
+
+    def _run(
+        self,
+        report: "ValidationReport",
+        tenant_id: str,
+        query_id: str,
+        timing: Timing,
+    ) -> "ExecutionResult":
+        """Execute the validated SQL and build the ExecutionResult.
+
+        Split out so the stage timer wraps the whole attempt, success or
+        failure, without the body having to know it is being timed.
+        """
         try:
             rows = self._executor.execute(
                 report.sanitized_sql,
                 params={"tenant_id": tenant_id},
             )
-            latency_ms = (time.perf_counter() - t0) * 1000
+            latency_ms = timing.elapsed_ms
             columns = list(rows[0].keys()) if rows else []
 
             result = ExecutionResult(
@@ -298,7 +313,7 @@ class QueryExecutor:
         except TenantFilterMissingError:
             raise
         except Exception as exc:
-            latency_ms = (time.perf_counter() - t0) * 1000
+            latency_ms = timing.elapsed_ms
             SQL_PIPELINE_ERRORS.labels(stage="stage3").inc()
             result = ExecutionResult(
                 query_id=query_id,
