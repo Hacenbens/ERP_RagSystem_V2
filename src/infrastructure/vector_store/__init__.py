@@ -1,5 +1,11 @@
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
-from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
-from src.infrastructure.vector_store.mongo_vector_store import MongoVectorStore
+from src.infrastructure.vector_store.milvus_provider import MilvusVectorDBProvider
+from src.infrastructure.vector_store.tenant_collection_vector_store import (
+    TenantCollectionVectorStore,
+)
 
-__all__ = ["InMemoryVectorStore", "MilvusVectorStore", "MongoVectorStore"]
+__all__ = [
+    "InMemoryVectorStore",
+    "MilvusVectorDBProvider",
+    "TenantCollectionVectorStore",
+]

@@ -169,7 +169,7 @@ class TestDIFactory:
     ):
         """With MILVUS_DB_URI set, the factory builds the per-tenant store.
 
-        It returns TenantCollectionVectorStore rather than MilvusVectorStore
+        It returns TenantCollectionVectorStore, over a connected provider
         since Sprint 12: isolation moved from a tenant_id filter on one shared
         collection to a collection per tenant.
         """

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -32,7 +33,13 @@ from src.infrastructure.vector_store.tenant_collection_vector_store import (
 
 URI = os.environ.get("MILVUS_TEST_SERVER_URI", "")
 DIM = 4
-FERZA, ACME = "tenant-ferza", "acme"
+
+# Unique per run, and unmistakably a test. The fixtures call drop_tenant() on
+# these in setup and teardown, so a plain id like "acme" deletes the vectors of
+# a real tenant of that name in whatever Milvus the suite is pointed at — which
+# is exactly what happened when this ran against the dev server.
+_RUN = uuid.uuid4().hex[:8]
+FERZA, ACME = f"pytest-ferza-{_RUN}", f"pytest-acme-{_RUN}"
 
 
 def _unit(i: int) -> list[float]:

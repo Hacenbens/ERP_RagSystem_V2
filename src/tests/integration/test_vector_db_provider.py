@@ -17,6 +17,7 @@ behaviour the code already assumed.
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -31,6 +32,11 @@ from src.infrastructure.vector_store.milvus_provider import MilvusVectorDBProvid
 URI = os.environ.get("MILVUS_TEST_SERVER_URI", "")
 DIM = 4
 
+# Tenancy tests recreate and delete these tenants' collections, so the ids must
+# not be able to name a real tenant. Unique per run, and obviously a test.
+_RUN = uuid.uuid4().hex[:8]
+TENANT_A, TENANT_B = f"pytest-ferza-{_RUN}", f"pytest-acme-{_RUN}"
+
 pytestmark = pytest.mark.skipif(
     not URI, reason="MILVUS_TEST_SERVER_URI not set — needs a running Milvus server"
 )
@@ -40,6 +46,16 @@ def _unit(i: int) -> list[float]:
     v = [0.0] * DIM
     v[i % DIM] = 1.0
     return v
+
+
+def _is_ours(name: str) -> bool:
+    """Only collections this run created may be dropped.
+
+    Teardown used to drop everything that appeared during a test. Against a
+    shared server that also catches collections another process created while
+    the test ran, so it is narrowed to names this run is responsible for.
+    """
+    return name.startswith("test_") or _RUN in name
 
 
 @pytest.fixture()
@@ -54,6 +70,8 @@ def provider() -> Iterator[MilvusVectorDBProvider]:
     before = set(p.list_collections())
     yield p
     for name in set(p.list_collections()) - before:
+        if not _is_ours(name):
+            continue
         try:
             p.delete_collection(name)
         except Exception:  # noqa: BLE001 — cleanup must not fail the test
@@ -63,8 +81,6 @@ def provider() -> Iterator[MilvusVectorDBProvider]:
 
 @pytest.fixture()
 def collection(provider: MilvusVectorDBProvider) -> str:
-    import uuid
-
     return f"test_{uuid.uuid4().hex[:10]}"
 
 
@@ -271,7 +287,7 @@ class TestSearch:
 class TestTenantCollections:
     def test_the_name_is_deterministic(self, provider):
         """Any process must resolve a tenant to the same collection."""
-        assert provider.tenant_collection("ferza") == provider.tenant_collection("ferza")
+        assert provider.tenant_collection(TENANT_A) == provider.tenant_collection(TENANT_A)
 
     def test_the_name_is_legal_for_milvus(self, provider):
         """Hyphens are rejected, and a leading digit is rejected."""
@@ -291,7 +307,7 @@ class TestTenantCollections:
         assert len(name) <= 255
 
     def test_each_tenant_sees_only_its_own_data(self, provider):
-        a, b = "tenant-ferza", "acme"
+        a, b = TENANT_A, TENANT_B
         provider.create_collection(provider.tenant_collection(a), DIM, do_recreate=True)
         provider.create_collection(provider.tenant_collection(b), DIM, do_recreate=True)
         provider.insert_one(provider.tenant_collection(a), "ferza policy", _unit(0))
@@ -304,7 +320,7 @@ class TestTenantCollections:
         assert provider.search_by_tenant("never-seen", _unit(0)) == []
 
     def test_deleting_one_tenant_leaves_the_other_intact(self, provider):
-        a, b = "tenant-ferza", "acme"
+        a, b = TENANT_A, TENANT_B
         provider.create_collection(provider.tenant_collection(a), DIM, do_recreate=True)
         provider.create_collection(provider.tenant_collection(b), DIM, do_recreate=True)
         provider.insert_one(provider.tenant_collection(a), "ferza", _unit(0))

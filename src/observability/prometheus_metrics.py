@@ -166,12 +166,6 @@ HYBRID_LATENCY = Histogram(
     buckets=(0.5, 1.0, 2.0, 4.0, 8.0, 16.0),
 )
 
-HYBRID_PARTIAL_RATE = Counter(
-    "erp_rag_hybrid_partial_total",
-    "Hybrid queries that fell back to single-agent due to the other failing",
-    ["fallback_mode"],  # "rag_only" | "sql_only"
-)
-
 # ---------------------------------------------------------------------------
 # LLM health / degraded mode — Sprint 8
 # ---------------------------------------------------------------------------
@@ -191,38 +185,6 @@ CIRCUIT_BREAKER_STATE = Gauge(
 DEGRADED_MODE_ACTIVATIONS = Counter(
     "erp_rag_degraded_mode_activations_total",
     "Total times the system fell back to degraded mode",
-)
-
-# ---------------------------------------------------------------------------
-# Per-request stage latency + token usage — Sprint 8 MetricsCollector
-# ---------------------------------------------------------------------------
-
-QUERY_STAGE_LATENCY_MS = Histogram(
-    "erp_rag_query_latency_ms",
-    "Per-pipeline-stage latency in milliseconds",
-    ["stage"],
-    buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000),
-)
-
-TOKENS_USED = Counter(
-    "erp_rag_tokens_used_total",
-    "Total LLM tokens consumed",
-    ["type"],  # "prompt" | "completion"
-)
-
-# ---------------------------------------------------------------------------
-# Query classifier — Sprint 9
-# ---------------------------------------------------------------------------
-
-CLASSIFIER_BLOCKED_RATE = Counter(
-    "erp_rag_classifier_blocked_total",
-    "Total queries blocked by the query classifier (harmful / out-of-scope)",
-    ["reason"],
-)
-
-CLASSIFIER_ACCURACY = Gauge(
-    "erp_rag_classifier_accuracy",
-    "Most recently measured query classifier accuracy (0.0–1.0)",
 )
 
 # ---------------------------------------------------------------------------
@@ -257,15 +219,8 @@ __all__ = [
     # hybrid agent
     "HYBRID_SUCCESS_RATE",
     "HYBRID_LATENCY",
-    "HYBRID_PARTIAL_RATE",
     # llm health
     "LLM_FAILURE_RATE",
     "CIRCUIT_BREAKER_STATE",
     "DEGRADED_MODE_ACTIVATIONS",
-    # per-request accumulator
-    "QUERY_STAGE_LATENCY_MS",
-    "TOKENS_USED",
-    # classifier
-    "CLASSIFIER_BLOCKED_RATE",
-    "CLASSIFIER_ACCURACY",
 ]

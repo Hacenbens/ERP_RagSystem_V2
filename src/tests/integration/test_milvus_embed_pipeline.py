@@ -1,10 +1,11 @@
 """
-Integration tests — MilvusVectorStore embed pipeline (Sprint 9 Task 4)
+Integration tests — embed pipeline against a real Milvus (Sprint 9 Task 4)
 
 Strategy
 --------
-- MilvusVectorStore backed by a Milvus-Lite .db file (tmp_path fixture per test).
-- EmbedAssetUseCase wired with real MilvusVectorStore + stub ChunkStore +
+- TenantCollectionVectorStore over a MilvusVectorDBProvider, backed by a
+  Milvus-Lite .db file (tmp_path fixture per test).
+- EmbedAssetUseCase wired with the real store + stub ChunkStore +
   stub EmbeddingPort.
 - Embedding dim=4 for speed; deterministic unit vectors give controllable
   cosine-similarity ordering — no network calls needed.
@@ -24,7 +25,10 @@ import pytest
 from src.domain.chunk import Chunk
 from src.domain.ports.chunk_store_port import ChunkStorePort
 from src.domain.ports.embedding_port import EmbeddingPort
-from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
+from src.infrastructure.vector_store.milvus_provider import MilvusVectorDBProvider
+from src.infrastructure.vector_store.tenant_collection_vector_store import (
+    TenantCollectionVectorStore,
+)
 from src.use_cases.tasks.embed_asset_use_case import (
     AssetAlreadyEmbeddedError,
     EmbedAssetUseCase,
@@ -87,14 +91,22 @@ class _MemoryChunkStore(ChunkStorePort):
 
 @pytest.fixture()
 def milvus_store(tmp_path):
-    """Fresh MilvusVectorStore backed by a temp .db file — isolated per test."""
-    store = MilvusVectorStore(uri=str(tmp_path / "test.db"), dim=_DIM)
-    yield store
-    store.drop()
+    """Fresh store backed by a temp .db file — isolated per test.
+
+    The factory is the only place that connects a provider in production, so
+    the fixture mirrors it: construct with auto_connect=False, connect, then
+    build the store around the connected provider.
+    """
+    provider = MilvusVectorDBProvider(
+        uri=str(tmp_path / "test.db"), default_embedding_size=_DIM, auto_connect=False
+    )
+    provider.connect()
+    yield TenantCollectionVectorStore(provider=provider, embedding_size=_DIM)
+    provider.disconnect()
 
 
 def _make_use_case(
-    store: MilvusVectorStore,
+    store: TenantCollectionVectorStore,
     chunks: list[Chunk],
     asset_id: str = _ASSET_A,
     tenant_id: str = _TENANT_A,
@@ -291,7 +303,7 @@ class TestMilvusTenantIsolation:
 # ===========================================================================
 
 class TestMilvusErpModuleFilter:
-    def _embed_hr_and_finance(self, store: MilvusVectorStore) -> None:
+    def _embed_hr_and_finance(self, store: TenantCollectionVectorStore) -> None:
         hr_chunk = Chunk(
             text="hr leave policy",
             chunk_id="hr-ch",
