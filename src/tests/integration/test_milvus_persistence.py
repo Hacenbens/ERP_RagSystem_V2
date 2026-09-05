@@ -161,3 +161,89 @@ class TestEnvVarCollision:
         monkeypatch.delenv("MILVUS_DB_URI", raising=False)
 
         assert isinstance(_select_vector_store(dim=_DIM), InMemoryVectorStore)
+
+
+# ---------------------------------------------------------------------------
+# Against a Milvus server — Sprint 12 (S12·1)
+# ---------------------------------------------------------------------------
+
+MILVUS_SERVER_URI = os.environ.get("MILVUS_TEST_SERVER_URI", "")
+
+
+@pytest.mark.skipif(
+    not MILVUS_SERVER_URI,
+    reason="MILVUS_TEST_SERVER_URI not set — needs a running Milvus server",
+)
+class TestAgainstAMilvusServer:
+    """Milvus Lite is a single-process file lock, so the API and a separate
+    Celery worker cannot both open it — the worker dies with
+    "Open local milvus failed". A server is what makes the two-process topology
+    the whole Celery layer exists for actually possible.
+
+    The server also behaves differently in a way Lite hid: it buffers inserts
+    and serves queries from a bounded-staleness view, so a marker written by
+    one client was invisible to another for a while. Lite applied writes
+    immediately, so no amount of single-process testing would have shown it.
+    """
+
+    @pytest.fixture()
+    def collection(self) -> Iterator[str]:
+        import uuid
+
+        name = f"test_{uuid.uuid4().hex[:10]}"
+        yield name
+        try:
+            MilvusVectorStore(
+                uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=name
+            ).drop()
+        except Exception:  # noqa: BLE001 — cleanup must not fail the test
+            pass
+
+    def test_a_second_client_sees_the_vectors(self, collection):
+        writer = MilvusVectorStore(
+            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
+        )
+        writer.upsert("A1", "t1", _unit(0), "c1", "vat rules")
+        writer.save_vectors("A1", "t1", 1)
+
+        reader = MilvusVectorStore(
+            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
+        )
+        assert len(reader.search_similar(_unit(0), 5, "t1")) == 1
+
+    def test_a_second_client_sees_the_completion_marker(self, collection):
+        """The bug the server exposed: searchable vectors, invisible marker.
+
+        Left unfixed, the worker would re-embed an asset it had just finished
+        because has_vectors() answered False from a stale view.
+        """
+        writer = MilvusVectorStore(
+            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
+        )
+        writer.upsert("A1", "t1", _unit(0), "c1", "vat rules")
+        writer.save_vectors("A1", "t1", 1)
+
+        reader = MilvusVectorStore(
+            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
+        )
+        assert reader.has_vectors("A1", "t1") is True
+        assert reader.count("A1", "t1") == 1
+
+    def test_tenant_scoping_holds_on_the_server(self, collection):
+        writer = MilvusVectorStore(
+            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
+        )
+        writer.upsert("A1", "t1", _unit(0), "c1", "vat rules")
+        writer.save_vectors("A1", "t1", 1)
+
+        reader = MilvusVectorStore(
+            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
+        )
+        assert reader.search_similar(_unit(0), 5, "other-tenant") == []
+
+    def test_the_factory_accepts_a_server_uri(self, monkeypatch):
+        from src.infrastructure.di.factory import _select_vector_store
+
+        monkeypatch.setenv("MILVUS_DB_URI", MILVUS_SERVER_URI)
+
+        assert isinstance(_select_vector_store(dim=_DIM), MilvusVectorStore)

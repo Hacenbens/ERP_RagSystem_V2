@@ -14,6 +14,10 @@
 # Never reuse them anywhere reachable from outside this machine.
 set -euo pipefail
 
+# Milvus is not started here: it needs etcd and MinIO alongside it, and the
+# compose stack already declares all three. Use that for the vector store —
+# Milvus Lite (a local .db path) cannot back an API and a worker at once, it is
+# a single-process file lock.
 PG_CONTAINER=erp_rag_pg_dev
 MONGO_CONTAINER=erp_rag_mongo_dev
 PG_VOLUME=erp_rag_pg_dev_data

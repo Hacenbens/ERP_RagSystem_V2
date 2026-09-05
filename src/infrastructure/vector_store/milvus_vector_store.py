@@ -190,11 +190,24 @@ class MilvusVectorStore(VectorStorePort):
         )
 
     def count(self, asset_id: str, tenant_id: str) -> int:
-        """Return the recorded vector count, or 0 if never finished embedding."""
+        """Return the recorded vector count, or 0 if never finished embedding.
+
+        Read at Strong consistency. A Milvus *server* buffers inserts and
+        serves queries from a bounded-staleness view by default, so a marker
+        written by the worker was invisible to the API for a while: the vectors
+        were searchable, has_vectors() said False, and the worker would have
+        re-embedded an asset it had just finished. Milvus Lite applied writes
+        immediately, which is why single-process testing never showed it.
+
+        The state collection holds one small row per asset and is read once per
+        embed, so the cost of Strong here is not worth trading for a wrong
+        answer about whether work is done.
+        """
         rows = self._client.query(
             self._state_collection,
             filter=self._asset_filter(asset_id, tenant_id),
             output_fields=["vector_count"],
+            consistency_level="Strong",
         )
         if not rows:
             return 0
