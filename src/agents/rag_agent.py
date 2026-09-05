@@ -14,9 +14,9 @@ import re
 from typing import Any, Protocol, runtime_checkable
 
 from src.agents.base_agent import AgentContext, BaseAgent
-from src.agents.helpers import parse_llm_json
 from src.domain.models.rag_result import RAGResult
 from src.domain.ports.llm_port import LLMPort
+from src.infrastructure.generation.llm_json import parse_llm_json
 from src.infrastructure.rag.context_builder import ContextBuilder
 from src.infrastructure.rag.vector_retriever import VectorRetriever
 from src.observability.structured_logger import get_logger

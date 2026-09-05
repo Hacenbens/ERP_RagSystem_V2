@@ -21,13 +21,13 @@ import time
 from typing import Any
 
 from src.agents.base_agent import AgentContext, BaseAgent
-from src.agents.helpers import parse_llm_json
 from src.agents.rag_agent import RAGAgent
 from src.agents.sql_agent import SQLAgent
 from src.domain.models.hybrid_result import HybridResult
 from src.domain.models.rag_result import RAGResult
 from src.domain.models.sql_result import SQLResult
 from src.domain.ports.llm_port import LLMPort
+from src.infrastructure.generation.llm_json import parse_llm_json
 from src.observability.prometheus_metrics import HYBRID_LATENCY, HYBRID_SUCCESS_RATE
 from src.observability.structured_logger import get_logger
 from src.prompts.registry import PromptRegistry

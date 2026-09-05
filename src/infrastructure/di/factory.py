@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from helpers.config import erp_pg_dsn
 from src.domain.chunk import Chunk
 from src.domain.chunk_strategy import ChunkStrategy
 from src.domain.ports.embedding_port import EmbeddingPort
@@ -48,8 +49,9 @@ from src.agents.query_classifier_agent import QueryClassifierAgent
 from src.agents.rag_agent import RAGAgent
 from src.agents.sql_agent import SQLAgent
 from src.infrastructure.erp.query_executor import QueryExecutor
-from src.infrastructure.erp.query_generator import QueryGenerator
+from src.infrastructure.erp.query_generator import ALLOWED_TABLES, QueryGenerator
 from src.infrastructure.erp.query_validator import QueryValidator
+from src.infrastructure.erp.schema_provider import ErpSchemaProvider
 from src.infrastructure.generation.degraded_mode_service import (
     DegradedModeLLM,
     DegradedModeService,
@@ -220,6 +222,7 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
     # --- LLM (independent circuit breakers per use-site) -------------------
     agent_selector = _build_model_selector()       # RAGAgent + HybridAgent
     classifier_llm = _build_model_selector()       # QueryClassifierAgent — separate CB state
+    sql_selector = _build_model_selector()         # QueryGenerator Stage 1 — separate CB state
 
     # Answer generation degrades to a cached or placeholder answer. The
     # classifier does not: a degraded JSON blob is not a RoutingDecision, so
@@ -259,7 +262,18 @@ def build_query_chain(container: DIContainer, prompts_dir: str | None = None) ->
         registry=prompt_registry,
     )
     sql_agent = SQLAgent(
-        generator=QueryGenerator(),
+        # The generator falls back to the keyword map on any failure, so it
+        # takes the raw selector rather than the degraded-mode wrapper: a
+        # placeholder "service unavailable" string is not SQL, and deterministic
+        # SQL is the better answer when the model cannot be reached.
+        generator=QueryGenerator(
+            llm=sql_selector if isinstance(sql_selector, ModelSelector) else None,
+            registry=prompt_registry if isinstance(sql_selector, ModelSelector) else None,
+            # Introspects the live schema on first use so the model writes SQL
+            # against the columns that exist. Falls back to table names when no
+            # database is configured.
+            schema=ErpSchemaProvider(erp_pg_dsn(), ALLOWED_TABLES),
+        ),
         validator=QueryValidator(),
         executor=QueryExecutor(),
     )

@@ -1,6 +1,11 @@
 """
 Parsing LLM responses that are supposed to be JSON but are not quite.
 
+Lives with the LLM infrastructure rather than under src/agents/ because the
+SQL generator needs it too, and src/agents/__init__ eagerly imports every
+agent — so importing a helper from there pulled the whole agent layer in and
+closed a cycle back through sql_agent to query_generator.
+
 Every agent asks its model for a JSON object and called ``json.loads`` on the
 reply directly. Gemini wraps JSON in a markdown fence:
 
