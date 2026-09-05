@@ -19,7 +19,7 @@ import json
 
 import jsonschema
 
-from src.agents.helpers import parse_llm_json
+from src.infrastructure.generation.llm_json import parse_llm_json
 from src.domain.erp_module import ErpModule
 from src.domain.models.routing_decision import RoutingDecision
 from src.domain.ports.llm_port import LLMPort

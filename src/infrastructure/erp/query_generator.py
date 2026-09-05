@@ -5,18 +5,32 @@ NL query → raw SQL string
 Architecture rule: this stage only generates SQL.
 It does NOT validate or execute — that is Stage 2 and Stage 3.
 
-Real implementation calls LLM (OpenAI/vLLM).
-Offline fallback generates deterministic SQL from keyword mapping
-(used when OPENAI_API_KEY is absent or in unit tests).
+Generation calls the injected LLMPort with the versioned ``sql_generator``
+prompt. Without one — CI, tests, any environment with no provider — it falls
+back to a deterministic keyword map.
+
+The fallback is not a substitute. It matches the first keyword it recognises
+and stops, so it does not know the schema and writes confident SQL against the
+wrong table:
+
+    "overdue invoices by supplier" -> SELECT * FROM suppliers WHERE ...
+                                      (matched "supplier"; the invoice
+                                       aggregate is gone)
+
+Which is why every result records ``used_fallback``, and the caller surfaces it.
 """
 from __future__ import annotations
 
-import os
+import re
 import time
 from dataclasses import dataclass
 
-from src.observability.prometheus_metrics import SQL_STAGE1_LATENCY
+from src.domain.ports.llm_port import LLMPort
+from src.infrastructure.generation.llm_json import parse_llm_json
+from src.observability.prometheus_metrics import SQL_PIPELINE_ERRORS, SQL_STAGE1_LATENCY
 from src.observability.structured_logger import get_logger
+from src.infrastructure.erp.schema_provider import ErpSchemaProvider
+from src.prompts.registry import PromptRegistry
 
 logger = get_logger(__name__)
 
@@ -61,6 +75,18 @@ _TABLE_MAP: dict[str, str] = {
     "return": "returns",
     "refund": "returns",
 }
+
+
+# The tables the generator may reference, handed to the model in the prompt.
+# Derived from _TABLE_MAP so the two cannot drift: a table the offline path can
+# produce but the prompt does not list would be rejected downstream.
+ALLOWED_TABLES: tuple[str, ...] = tuple(sorted(set(_TABLE_MAP.values())))
+
+# Stage 3 binds the tenant. SQL carrying a literal ignores that binding and
+# returns another tenant's rows, so a generated statement that does not use the
+# bound parameter is discarded rather than repaired — a wrong tenant filter is
+# not something to guess at.
+_BOUND_TENANT_RE = re.compile(r"tenant_id\s*=\s*[:$]tenant_id", re.IGNORECASE)
 
 
 def _offline_generate(nl_query: str) -> str:
@@ -118,64 +144,174 @@ def _offline_generate(nl_query: str) -> str:
 class QueryGenerator:
     """Stage 1 — generates raw SQL from a natural language query.
 
-    Uses LLM when OPENAI_API_KEY is set; falls back to deterministic offline
-    stub when the key is absent (CI / test environments).
+    Args:
+        llm:      any LLMPort — GeminiLLMClient, vLLMLLMClient, ModelSelector,
+                  or the degraded-mode wrapper. ``None`` selects the offline
+                  path, which is what CI and the unit tests run on.
+        registry: PromptRegistry holding the versioned ``sql_generator`` prompt.
+                  Both must be present for the LLM path to be used.
+        schema:   describes the real tables and columns. Without it the model
+                  is given table names alone and invents plausible columns —
+                  "SELECT ... quantity_on_hand FROM inventory" against a schema
+                  that has no such column.
     """
 
-    def __init__(self, model: str = "gpt-4o") -> None:
-        self._model = model
-        self._api_key = os.environ.get("OPENAI_API_KEY", "")
+    def __init__(
+        self,
+        llm: LLMPort | None = None,
+        registry: PromptRegistry | None = None,
+        schema: "ErpSchemaProvider | None" = None,
+    ) -> None:
+        self._llm = llm
+        self._registry = registry
+        self._schema = schema
 
-    def generate(self, nl_query: str, tenant_id: str = ":tenant_id") -> GeneratedSQL:
-        """Generate SQL for a natural-language query.
+    def generate(
+        self,
+        nl_query: str,
+        tenant_id: str = ":tenant_id",
+        erp_module: str | None = None,
+    ) -> GeneratedSQL:
+        """Generate SQL for *nl_query*.
 
-        Always parameterises the tenant with :tenant_id placeholder.
-        The actual tenant_id is bound at Stage 3 execution time.
+        The tenant is always the bound ``:tenant_id`` parameter, filled by
+        Stage 3 from the caller's claims. ``tenant_id`` here is passed to the
+        model as context only — never interpolated into the statement.
         """
         t0 = time.perf_counter()
+        sql: str | None = None
+        model_name = "offline"
 
-        if self._api_key and self._api_key != "sk-...":
-            sql = self._llm_generate(nl_query)
-            used_fallback = False
-        else:
+        if self._llm is not None and self._registry is not None:
+            try:
+                sql, model_name = self._llm_generate(nl_query, tenant_id, erp_module)
+            except Exception as exc:
+                SQL_PIPELINE_ERRORS.labels(stage="stage1").inc()
+                logger.warning(
+                    "sql.stage1.llm_fallback",
+                    error_type=type(exc).__name__,
+                    reason=str(exc)[:200],
+                )
+
+        used_fallback = sql is None
+        if sql is None:
             sql = _offline_generate(nl_query)
-            used_fallback = True
+            model_name = "offline"
 
         latency_ms = (time.perf_counter() - t0) * 1000
         SQL_STAGE1_LATENCY.observe(latency_ms / 1000)
         logger.info(
             "sql.stage1.generated",
             used_fallback=used_fallback,
+            model=model_name,
             latency_ms=round(latency_ms, 2),
         )
         return GeneratedSQL(
             nl_query=nl_query,
             raw_sql=sql,
             latency_ms=latency_ms,
-            model=self._model if not used_fallback else "offline",
+            model=model_name,
             used_fallback=used_fallback,
         )
 
-    def _llm_generate(self, nl_query: str) -> str:
-        """Call OpenAI to generate SQL. Sprint 4 stub — real prompt in Sprint 7."""
+    # ------------------------------------------------------------------
+    # LLM path
+    # ------------------------------------------------------------------
+
+    def _llm_generate(
+        self, nl_query: str, tenant_id: str, erp_module: str | None
+    ) -> tuple[str, str]:
+        """Return ``(sql, model_name)`` from the LLM, or raise.
+
+        Raises rather than falling back internally so ``generate`` owns the
+        single fallback decision and records it once. Every rejection below is
+        a reason to prefer deterministic SQL over a plausible-looking guess.
+        """
+        assert self._registry is not None and self._llm is not None  # generate() checks
+        pv = self._registry.resolve("sql_generator", "production")
+        prompt = self._build_prompt(
+            pv.prompt_text, nl_query, tenant_id, erp_module, self._describe_schema()
+        )
+
+        raw = self._llm.complete(
+            prompt,
+            temperature=pv.parameters.temperature,
+            max_tokens=pv.parameters.max_tokens,
+        )
+        sql = self._extract_sql(raw)
+        self._reject_unsafe(sql)
+        return sql, pv.parameters.model
+
+    def _describe_schema(self) -> str:
+        """Real tables and columns when available, bare table names otherwise."""
+        if self._schema is not None:
+            return self._schema.describe()
+        return ", ".join(ALLOWED_TABLES)
+
+    @staticmethod
+    def _build_prompt(
+        template: str,
+        question: str,
+        tenant_id: str,
+        erp_module: str | None,
+        schema: str,
+    ) -> str:
+        """Fill the prompt's placeholders."""
+        return (
+            template
+            .replace("{{question}}", question)
+            .replace("{{masked_query}}", question)
+            .replace("{{tenant_id}}", tenant_id)
+            .replace("{{erp_module}}", erp_module or "not specified")
+            .replace("{{allowed_tables}}", schema)
+        )
+
+    @staticmethod
+    def _extract_sql(raw: str) -> str:
+        """Pull the SQL out of the model's reply.
+
+        The prompt asks for a JSON object with a ``sql`` key. Models fence it,
+        wrap it in prose, or ignore the instruction and return the bare
+        statement — parse_llm_json handles the first two, and a bare SELECT is
+        accepted as the last resort rather than discarding a usable answer over
+        formatting.
+        """
         try:
-            import openai  # type: ignore
-            client = openai.OpenAI(api_key=self._api_key)
-            prompt = (
-                "You are an ERP SQL expert. Generate a single PostgreSQL SELECT "
-                "statement for the following request. Always include "
-                "WHERE tenant_id = :tenant_id. Output ONLY the SQL.\n\n"
-                f"Request: {nl_query}"
+            payload = parse_llm_json(raw)
+        except ValueError:
+            cleaned = raw.strip().strip("`").strip()
+            if re.match(r"^\s*SELECT\b", cleaned, re.IGNORECASE):
+                return cleaned.rstrip(";").strip()
+            raise
+
+        sql = str(payload.get("sql") or "").strip()
+        if not sql:
+            raise ValueError(f"LLM response has no 'sql' key: {raw[:200]!r}")
+        return sql.rstrip(";").strip()
+
+    @staticmethod
+    def _reject_unsafe(sql: str) -> None:
+        """Discard SQL that Stage 2 would reject, or that leaks across tenants.
+
+        Stage 2 validates independently and is the real gate; catching it here
+        means a bad generation becomes deterministic SQL that answers the
+        question, instead of a validation error the user sees.
+        """
+        if not re.match(r"^\s*SELECT\b", sql, re.IGNORECASE):
+            raise ValueError(f"Generated SQL is not a SELECT: {sql[:120]!r}")
+
+        if not _BOUND_TENANT_RE.search(sql):
+            # Most often the model wrote tenant_id = 'ferza'. That ignores the
+            # Stage 3 binding and would return whichever tenant it chose.
+            raise ValueError(
+                f"Generated SQL does not filter on the bound :tenant_id: {sql[:120]!r}"
             )
-            response = client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as exc:
-            logger.warning("sql.stage1.llm_fallback", reason=str(exc))
-            return _offline_generate(nl_query)
+
+        referenced = set(re.findall(r"\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, re.IGNORECASE))
+        referenced |= set(re.findall(r"\bJOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)", sql, re.IGNORECASE))
+        unknown = {t for t in referenced if t.lower() not in ALLOWED_TABLES}
+        if unknown:
+            raise ValueError(f"Generated SQL references unknown tables: {sorted(unknown)}")
 
 
 __all__ = ["QueryGenerator", "GeneratedSQL"]
