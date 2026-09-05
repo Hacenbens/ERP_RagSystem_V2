@@ -87,11 +87,12 @@ class ErpSchemaProvider:
         try:
             import psycopg2  # type: ignore
 
-            with psycopg2.connect(self._dsn) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(_INTROSPECT_SQL)
-                    rows = cur.fetchall()
-        except Exception as exc:
+            with psycopg2.connect(self._dsn) as conn, conn.cursor() as cur:
+                cur.execute(_INTROSPECT_SQL)
+                rows = cur.fetchall()
+        # Deliberately broad: a schema lookup is an optimisation for prompt
+        # quality, and no failure of it should stop the pipeline answering.
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "sql.schema.introspection_failed",
                 error_type=type(exc).__name__,
