@@ -143,12 +143,16 @@ class TestEnvVarCollision:
         assert proc.returncode == 0, proc.stderr
 
     def test_factory_reads_the_renamed_variable(self, tmp_path, monkeypatch):
+        """The factory now builds the per-tenant store, not this class."""
         from src.infrastructure.di.factory import _select_vector_store
+        from src.infrastructure.vector_store.tenant_collection_vector_store import (
+            TenantCollectionVectorStore,
+        )
 
         monkeypatch.delenv("MILVUS_URI", raising=False)
         monkeypatch.setenv("MILVUS_DB_URI", str(tmp_path / "factory.db"))
 
-        assert isinstance(_select_vector_store(dim=_DIM), MilvusVectorStore)
+        assert isinstance(_select_vector_store(dim=_DIM), TenantCollectionVectorStore)
 
     def test_factory_ignores_the_old_variable(self, tmp_path, monkeypatch):
         """A leftover MILVUS_URI must not silently re-enable the collision."""

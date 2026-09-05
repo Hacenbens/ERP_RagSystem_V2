@@ -28,6 +28,19 @@ class VectorSearchHit:
 
 
 @dataclass(frozen=True)
+class VectorRecord:
+    """One stored record, fetched by id rather than by similarity.
+
+    Distinct from VectorSearchHit because there is no score: nothing was
+    compared. Giving it a meaningless 0.0 would invite someone to rank on it.
+    """
+
+    record_id: str
+    text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CollectionInfo:
     """Structural metadata about a collection.
 
@@ -40,4 +53,4 @@ class CollectionInfo:
     embedding_size: int | None = None
 
 
-__all__ = ["CollectionInfo", "VectorSearchHit"]
+__all__ = ["CollectionInfo", "VectorRecord", "VectorSearchHit"]

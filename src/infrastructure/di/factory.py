@@ -34,7 +34,10 @@ from src.infrastructure.storage.local_asset_storage import LocalAssetStorage
 from src.infrastructure.storage.minio_asset_storage import MinioAssetStorage
 from src.infrastructure.workers.celery_job_dispatcher import CeleryJobDispatcher
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
-from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
+from src.infrastructure.vector_store.milvus_provider import MilvusVectorDBProvider
+from src.infrastructure.vector_store.tenant_collection_vector_store import (
+    TenantCollectionVectorStore,
+)
 from src.infrastructure.workers.chunkers.chunker_factory import ChunkerFactory
 from src.infrastructure.workers.dead_letter_repository import (
     InMemoryDeadLetterRepository,
@@ -182,22 +185,38 @@ def _select_reranker() -> "IdentityReranker | CrossEncoderReranker":
 
 
 def _select_vector_store(dim: int = 768) -> VectorStorePort:
-    """Return MilvusVectorStore when MILVUS_DB_URI is set, else InMemoryVectorStore.
+    """Return a per-tenant Milvus store when MILVUS_DB_URI is set, else in-memory.
+
+    This function is the only place a vector database connection is opened.
+    It builds the provider, calls connect() on it, and hands the connected
+    provider to the store. The store never opens or closes anything — it holds
+    the provider and calls data operations.
+
+    Lifecycle has one owner for a reason. A store that could reconnect would
+    let a connection be opened from wherever a query happened to run: inside a
+    Celery fork, mid-request, in a retry — with nothing owning when it closes.
 
     Deliberately not MILVUS_URI: pymilvus reads a variable of that exact name
     at import time and requires an http[s]:// address, so setting it to the
     Milvus Lite file path the project documents killed the process with
-    ConnectionConfigException before any project code ran. Renaming ours ends
-    the collision.
+    ConnectionConfigException before any project code ran.
     """
     uri = os.environ.get("MILVUS_DB_URI", "")
-    if uri:
-        logger.info("factory.vector_store.milvus_enabled", uri=uri)
-        return MilvusVectorStore(uri=uri, dim=dim)
-    logger.warning(
-        "factory.vector_store.in_memory — set MILVUS_DB_URI for persistent vector search"
+    if not uri:
+        logger.warning(
+            "factory.vector_store.in_memory — set MILVUS_DB_URI for persistent "
+            "vector search"
+        )
+        return InMemoryVectorStore()
+
+    # auto_connect=False so the connection is opened here, explicitly, rather
+    # than as a side effect of construction.
+    provider = MilvusVectorDBProvider(
+        uri=uri, default_embedding_size=dim, auto_connect=False
     )
-    return InMemoryVectorStore()
+    provider.connect()
+    logger.info("factory.vector_store.milvus_enabled", uri=uri, layout="per-tenant")
+    return TenantCollectionVectorStore(provider=provider, embedding_size=dim)
 
 
 def build_query_chain(container: DIContainer, prompts_dir: str | None = None) -> None:
