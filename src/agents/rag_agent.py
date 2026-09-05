@@ -19,6 +19,7 @@ from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.generation.llm_json import parse_llm_json
 from src.infrastructure.rag.context_builder import ContextBuilder
 from src.infrastructure.rag.vector_retriever import VectorRetriever
+from src.observability.stage_timer import Stage, stage_timer
 from src.observability.structured_logger import get_logger
 from src.prompts.registry import PromptRegistry
 
@@ -85,17 +86,20 @@ class RAGAgent(BaseAgent):
             tenant_id=context.tenant_id,
             erp_module=context.erp_module,
         )
-        ranked = self._reranker.rerank(query, chunks, top_k=self._rerank_top_k)
+        with stage_timer(Stage.RERANK):
+            ranked = self._reranker.rerank(query, chunks, top_k=self._rerank_top_k)
+
         context_str = self._context_builder.build(ranked, max_tokens=self._context_max_tokens)
 
         pv = self._registry.resolve("rag_answer")
         prompt = _render_prompt(pv.prompt_text, query, context_str)
 
-        raw = self._llm.complete(
-            prompt,
-            temperature=pv.parameters.temperature,
-            max_tokens=pv.parameters.max_tokens,
-        )
+        with stage_timer(Stage.GENERATE) as generation:
+            raw = self._llm.complete(
+                prompt,
+                temperature=pv.parameters.temperature,
+                max_tokens=pv.parameters.max_tokens,
+            )
 
         try:
             output: dict[str, Any] = parse_llm_json(raw)
@@ -118,6 +122,7 @@ class RAGAgent(BaseAgent):
             grounded=result.grounded,
             confidence=result.confidence,
             cited_chunks=len(result.cited_chunks),
+            generate_ms=round(generation.elapsed_ms, 2),
             trace_id=context.trace_id,
         )
         return result

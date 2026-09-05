@@ -9,7 +9,11 @@ Pipeline:
 
 Observability:
   HYBRID_SUCCESS_RATE — incremented when both agents succeed and merger runs
-  HYBRID_LATENCY      — histogram of end-to-end wall-clock time
+  HYBRID_LATENCY      — end-to-end wall clock. Deliberately kept alongside the
+                        per-stage histogram: RAG and SQL run concurrently, so
+                        the total is not the sum of the stages, and the gap
+                        between them is the parallelism actually achieved.
+  QUERY_STAGE_LATENCY_MS{stage="merge"} — the merger LLM call alone
   Partial failures are logged at WARNING. There is no partial-failure counter:
   one was defined but never emitted here, so it only ever exported zero.
 """
@@ -30,6 +34,7 @@ from src.domain.models.sql_result import SQLResult
 from src.domain.ports.llm_port import LLMPort
 from src.infrastructure.generation.llm_json import parse_llm_json
 from src.observability.prometheus_metrics import HYBRID_LATENCY, HYBRID_SUCCESS_RATE
+from src.observability.stage_timer import Stage, stage_timer
 from src.observability.structured_logger import get_logger
 from src.prompts.registry import PromptRegistry
 
@@ -152,11 +157,12 @@ class HybridAgent(BaseAgent):
         pv = self._registry.resolve("hybrid_orchestrator")
         prompt = _render_hybrid_prompt(pv.prompt_text, query, rag_result, sql_result)
 
-        raw = self._llm.complete(
-            prompt,
-            temperature=pv.parameters.temperature,
-            max_tokens=pv.parameters.max_tokens,
-        )
+        with stage_timer(Stage.MERGE):
+            raw = self._llm.complete(
+                prompt,
+                temperature=pv.parameters.temperature,
+                max_tokens=pv.parameters.max_tokens,
+            )
 
         try:
             output: dict[str, Any] = parse_llm_json(raw)

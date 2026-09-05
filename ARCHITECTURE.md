@@ -206,7 +206,14 @@ Policy lookup is delegated to `erp_rbac_policy.py` via three public functions:
 
 ## 3. Prometheus Metrics Reference
 
-| Metric | Type | Labels | Incremented by |
+Every metric below is emitted by production code. That is enforced, not
+asserted — see [ADR-001](docs/adr/ADR-001-no-dead-or-duplicate-code.md) and
+`TestEveryMetricIsEmitted`. A metric nothing writes to reports a permanent
+zero, which on a dashboard reads as "measured, and healthy".
+
+### Request path
+
+| Metric | Type | Labels | Emitted by |
 |---|---|---|---|
 | `erp_rag_requests_total` | Counter | method, endpoint, status_code | LoggingMiddleware |
 | `erp_rag_request_latency_seconds` | Histogram | method, endpoint, status_code | LoggingMiddleware |
@@ -216,6 +223,69 @@ Policy lookup is delegated to `erp_rbac_policy.py` via three public functions:
 | `erp_rag_pii_detections_total` | Counter | entity_type | PIIMaskingMiddleware |
 
 `MIDDLEWARE_VIOLATIONS` label values: `auth` · `rate_limit_user` · `rate_limit_ip` · `rbac_module` · `pii`
+
+### Query pipeline — per stage
+
+| Metric | Type | Labels | Emitted by |
+|---|---|---|---|
+| `erp_rag_query_stage_latency_ms` | Histogram | stage | `stage_timer()` — the only way a stage reports latency |
+| `erp_rag_tokens_used_total` | Counter | provider, type | GeminiLLMClient, vLLMLLMClient |
+
+`stage` label values, from `observability.stage_timer.Stage`:
+
+| Stage | Measures | Emitted in |
+|---|---|---|
+| `classify` | NL query → routing decision | `use_cases/route_query.py` |
+| `retrieve` | embed query + vector search | `infrastructure/rag/vector_retriever.py` |
+| `rerank` | cross-encoder re-scoring | `agents/rag_agent.py` |
+| `generate` | RAG answer generation | `agents/rag_agent.py` |
+| `merge` | hybrid RAG+SQL merge call | `agents/hybrid_agent.py` |
+| `sql_generate` | NL → SQL | `infrastructure/erp/query_generator.py` |
+| `sql_execute` | SQL → rows | `infrastructure/erp/query_executor.py` |
+
+Tokens come from the LLM clients because they are the only layer that sees what
+a provider actually charged. Counting higher up would mean estimating, and an
+estimate reported as a measurement is worse than no number. A provider that
+reports no usage records nothing — `None` is not `0`.
+
+**`stage_latency` does not replace `request_latency` or `hybrid_latency`.**
+Those are end-to-end wall clock. RAG and SQL run concurrently inside the hybrid
+pipeline, so the total is *not* the sum of the stages; the gap between them is
+the parallelism actually achieved, and it is worth seeing.
+
+### SQL pipeline
+
+| Metric | Type | Labels | Emitted by |
+|---|---|---|---|
+| `erp_rag_sql_stage2_errors_total` | Counter | reason | QueryValidator |
+| `erp_rag_sql_stage3_rows_returned` | Histogram | — | QueryExecutor |
+| `erp_rag_sql_pipeline_errors_total` | Counter | stage | QueryGenerator, QueryExecutor |
+
+Stage 1 latency was once its own metric, `erp_rag_sql_stage1_latency_seconds`,
+recording **seconds** while nothing else recorded stage latency at all. It is
+now `erp_rag_query_stage_latency_ms{stage="sql_generate"}`, in milliseconds,
+like every other stage.
+
+### Workers
+
+| Metric | Type | Labels | Emitted by |
+|---|---|---|---|
+| `erp_rag_worker_tasks_dispatched_total` | Counter | task_name | ingest_task |
+| `erp_rag_worker_tasks_failed_total` | Counter | task_name | ingest_task |
+| `erp_rag_worker_task_duration_seconds` | Histogram | task_name | ingest_task |
+| `erp_rag_embed_tasks_dispatched_total` | Counter | task_name | embed_task |
+| `erp_rag_embed_tasks_failed_total` | Counter | task_name | embed_task |
+| `erp_rag_embed_task_duration_seconds` | Histogram | task_name | embed_task |
+
+### Agents and LLM health
+
+| Metric | Type | Labels | Emitted by |
+|---|---|---|---|
+| `erp_rag_hybrid_successes_total` | Counter | — | HybridAgent |
+| `erp_rag_hybrid_latency_seconds` | Histogram | — | HybridAgent (end-to-end) |
+| `erp_rag_llm_failures_total` | Counter | provider | ModelSelector |
+| `erp_rag_circuit_breaker_open` | Gauge | provider | ModelSelector |
+| `erp_rag_degraded_mode_activations_total` | Counter | — | DegradedModeService |
 
 ---
 

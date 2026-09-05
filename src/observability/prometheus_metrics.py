@@ -81,12 +81,6 @@ MIDDLEWARE_VIOLATIONS = Counter(
 # SQL pipeline — Sprint 4
 # ---------------------------------------------------------------------------
 
-SQL_STAGE1_LATENCY = Histogram(
-    "erp_rag_sql_stage1_latency_seconds",
-    "Latency of Stage 1: natural language → SQL generation",
-    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
-)
-
 SQL_STAGE2_ERRORS = Counter(
     "erp_rag_sql_stage2_errors_total",
     "Total Stage 2 SQL validation errors",
@@ -188,6 +182,36 @@ DEGRADED_MODE_ACTIVATIONS = Counter(
 )
 
 # ---------------------------------------------------------------------------
+# Per-stage latency and token usage — Sprint 12
+#
+# QUERY_STAGE_LATENCY_MS is the *only* way a pipeline stage reports its
+# latency. It replaced SQL_STAGE1_LATENCY, which measured one stage with its
+# own metric and its own unit; two spellings of the same measurement is how a
+# dashboard ends up disagreeing with itself. Stage names come from
+# observability.stage_timer.Stage, so a typo cannot invent a series.
+#
+# It does not replace REQUEST_LATENCY or HYBRID_LATENCY. Those are end-to-end
+# wall clock, and for a pipeline whose halves run concurrently the total is not
+# the sum of the stages — that difference is the queueing, and it is worth
+# seeing.
+# ---------------------------------------------------------------------------
+
+QUERY_STAGE_LATENCY_MS = Histogram(
+    "erp_rag_query_stage_latency_ms",
+    "Latency of one query-pipeline stage, in milliseconds",
+    ["stage"],
+    buckets=(5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000),
+)
+
+TOKENS_USED = Counter(
+    "erp_rag_tokens_used_total",
+    "LLM tokens consumed, as reported by the provider",
+    # label "type" is "prompt" or "completion" — not spelled as an inline
+    # "# type:" comment, which mypy parses as a type annotation.
+    ["provider", "type"],
+)
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -203,8 +227,10 @@ __all__ = [
     "PII_DETECTION_RATE",
     # middleware
     "MIDDLEWARE_VIOLATIONS",
+    # per-stage latency + tokens
+    "QUERY_STAGE_LATENCY_MS",
+    "TOKENS_USED",
     # sql pipeline
-    "SQL_STAGE1_LATENCY",
     "SQL_STAGE2_ERRORS",
     "SQL_STAGE3_ROWS",
     "SQL_PIPELINE_ERRORS",
