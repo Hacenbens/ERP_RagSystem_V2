@@ -30,7 +30,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from src.domain.models.vector_records import CollectionInfo, VectorSearchHit
+from src.domain.models.vector_records import (
+    CollectionInfo,
+    VectorRecord,
+    VectorSearchHit,
+)
 
 
 class VectorDBProviderPort(ABC):
@@ -133,6 +137,16 @@ class VectorDBProviderPort(ABC):
         Raises:
             ValueError: the parallel lists differ in length. Silently zipping
                 to the shortest would attach vectors to the wrong text.
+        """
+
+    @abstractmethod
+    def get_record(self, collection_name: str, record_id: str) -> VectorRecord | None:
+        """Return the record with that id, or None if it is not there.
+
+        Retrieval by primary key, which every vector database supports. It is
+        what lets a caller ask a yes/no question about one known record —
+        "did this asset finish embedding" — without a similarity search that
+        would answer a different question.
         """
 
     # ------------------------------------------------------------------

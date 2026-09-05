@@ -164,17 +164,24 @@ class TestDIFactory:
         store = _select_vector_store()
         assert isinstance(store, InMemoryVectorStore)
 
-    def test_select_vector_store_returns_milvus_when_uri_is_set(
+    def test_select_vector_store_returns_the_per_tenant_store(
         self, monkeypatch, tmp_path
     ):
-        """With MILVUS_DB_URI pointing to a .db file, _select_vector_store() returns MilvusVectorStore."""
+        """With MILVUS_DB_URI set, the factory builds the per-tenant store.
+
+        It returns TenantCollectionVectorStore rather than MilvusVectorStore
+        since Sprint 12: isolation moved from a tenant_id filter on one shared
+        collection to a collection per tenant.
+        """
         db_path = str(tmp_path / "factory_test.db")
         monkeypatch.setenv("MILVUS_DB_URI", db_path)
         from src.infrastructure.di.factory import _select_vector_store
-        from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
+        from src.infrastructure.vector_store.tenant_collection_vector_store import (
+            TenantCollectionVectorStore,
+        )
 
         store = _select_vector_store(dim=4)
-        assert isinstance(store, MilvusVectorStore)
+        assert isinstance(store, TenantCollectionVectorStore)
 
 
 # ---------------------------------------------------------------------------

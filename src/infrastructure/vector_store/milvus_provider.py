@@ -19,7 +19,11 @@ from uuid import uuid4
 
 from pymilvus import DataType, MilvusClient
 
-from src.domain.models.vector_records import CollectionInfo, VectorSearchHit
+from src.domain.models.vector_records import (
+    CollectionInfo,
+    VectorRecord,
+    VectorSearchHit,
+)
 from src.domain.ports.vector_db_provider_port import (
     CollectionNotFoundError,
     VectorDBProviderPort,
@@ -271,6 +275,32 @@ class MilvusVectorDBProvider(VectorDBProviderPort):
             batch_size=batch_size,
         )
         return ids
+
+    def get_record(self, collection_name: str, record_id: str) -> VectorRecord | None:
+        """Fetch one record by primary key, at Strong consistency.
+
+        Strong because callers use this to decide whether work is already
+        done. A stale "not found" makes a worker redo an embed it just
+        finished.
+        """
+        if not self.is_collection_exists(collection_name):
+            return None
+
+        rows = self._c.query(
+            collection_name,
+            filter=f'record_id == "{record_id}"',
+            output_fields=["record_id", "text", "metadata"],
+            limit=1,
+            consistency_level="Strong",
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return VectorRecord(
+            record_id=row.get("record_id", ""),
+            text=row.get("text", ""),
+            metadata=self._decode_metadata(row.get("metadata")),
+        )
 
     # ------------------------------------------------------------------
     # Search
