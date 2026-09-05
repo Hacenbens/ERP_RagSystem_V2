@@ -86,6 +86,9 @@ class _StubChunkStore(ChunkStorePort):
     def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
         return 0
 
+    def list_assets(self) -> list:
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.domain.models.embedding_consistency import AssetRef
 from src.domain.chunk import Chunk
 from src.domain.ports.chunk_store_port import ChunkStorePort
 from src.domain.ports.embedding_port import EmbeddingPort
@@ -83,6 +84,9 @@ class _MemoryChunkStore(ChunkStorePort):
     def delete_by_asset(self, asset_id: str, tenant_id: str) -> int:
         removed = self._store.pop((asset_id, tenant_id), [])
         return len(removed)
+
+    def list_assets(self) -> list[AssetRef]:
+        return [AssetRef(asset_id=a, tenant_id=t) for (a, t) in self._store]
 
 
 # ---------------------------------------------------------------------------

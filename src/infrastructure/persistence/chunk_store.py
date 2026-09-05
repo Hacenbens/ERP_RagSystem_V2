@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.domain.chunk import Chunk
+from src.domain.models.embedding_consistency import AssetRef
 from src.domain.ports.chunk_store_port import ChunkStorePort
 
 
@@ -25,6 +26,14 @@ class InMemoryChunkStore(ChunkStorePort):
         """Remove all chunks for (asset_id, tenant_id) and return the count deleted."""
         existing = self._store.pop((asset_id, tenant_id), [])
         return len(existing)
+
+    def list_assets(self) -> list[AssetRef]:
+        """Return every asset held, across all tenants."""
+        return [
+            AssetRef(asset_id=asset_id, tenant_id=tenant_id)
+            for (asset_id, tenant_id), chunks in self._store.items()
+            if chunks
+        ]
 
 
 class MongoChunkStore(ChunkStorePort):
@@ -67,6 +76,21 @@ class MongoChunkStore(ChunkStorePort):
         """Remove all chunks for (asset_id, tenant_id) and return count deleted."""
         result = self._col.delete_many({"asset_id": asset_id, "tenant_id": tenant_id})
         return result.deleted_count
+
+    def list_assets(self) -> list[AssetRef]:
+        """Return every asset held, across all tenants.
+
+        Aggregates rather than reading every chunk: a reconciliation over a
+        large corpus should not pull the whole document set into memory to
+        learn which asset ids exist.
+        """
+        groups = self._col.aggregate([
+            {"$group": {"_id": {"asset_id": "$asset_id", "tenant_id": "$tenant_id"}}},
+        ])
+        return [
+            AssetRef(asset_id=g["_id"]["asset_id"], tenant_id=g["_id"]["tenant_id"])
+            for g in groups
+        ]
 
 
 __all__ = ["InMemoryChunkStore", "MongoChunkStore"]
