@@ -10,7 +10,8 @@ Pipeline:
 Observability:
   HYBRID_SUCCESS_RATE — incremented when both agents succeed and merger runs
   HYBRID_LATENCY      — histogram of end-to-end wall-clock time
-  Partial failures are logged at WARNING; HYBRID_PARTIAL_RATE added in TASK 11.
+  Partial failures are logged at WARNING. There is no partial-failure counter:
+  one was defined but never emitted here, so it only ever exported zero.
 """
 from __future__ import annotations
 

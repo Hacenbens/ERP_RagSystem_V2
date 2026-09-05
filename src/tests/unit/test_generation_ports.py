@@ -1,8 +1,7 @@
 """
-Unit tests — Sprint 8 Task 1: ModelSelectorPort, DegradedModePort, domain exceptions.
+Unit tests — Sprint 8 Task 1: DegradedModePort and the domain exceptions.
 
 Covers all acceptance criteria:
-  - ModelSelectorPort is a pure ABC with .complete() abstract
   - DegradedModePort is a pure ABC with .get_cached() and .set_cached() abstract
   - Concrete subclasses missing abstract methods cannot be instantiated (TypeError)
   - Concrete subclasses implementing all methods instantiate and work correctly
@@ -25,26 +24,13 @@ from src.domain.exceptions import (
     LLMUnavailableError,
     TenantFilterMissingError,
 )
-from src.domain.ports import DegradedModePort, ModelSelectorPort
+from src.domain.ports import DegradedModePort
 from src.domain.ports.degraded_mode_port import DegradedModePort as _DegradedModePortDirect
-from src.domain.ports.model_selector_port import ModelSelectorPort as _ModelSelectorPortDirect
 
 
 # ---------------------------------------------------------------------------
 # Minimal concrete implementations used by the tests
 # ---------------------------------------------------------------------------
-
-class _ConcreteSelector(ModelSelectorPort):
-    """Minimal implementation that returns a fixed answer."""
-
-    def complete(
-        self,
-        prompt: str,
-        temperature: float = 0.0,
-        max_tokens: int = 512,
-    ) -> str:
-        return f"answer::{prompt[:10]}"
-
 
 class _ConcreteCache(DegradedModePort):
     """Minimal implementation backed by an in-memory dict."""
@@ -57,59 +43,6 @@ class _ConcreteCache(DegradedModePort):
 
     def set_cached(self, query_hash: str, answer: str) -> None:
         self._store[query_hash] = answer
-
-
-# ---------------------------------------------------------------------------
-# ABC enforcement — ModelSelectorPort
-# ---------------------------------------------------------------------------
-
-class TestModelSelectorPortIsABC:
-    """ModelSelectorPort must be uninstantiable and enforce complete()."""
-
-    def test_model_selector_port_cannot_be_instantiated_directly(self):
-        with pytest.raises(TypeError):
-            ModelSelectorPort()  # type: ignore[abstract]
-
-    def test_model_selector_port_subclass_missing_complete_cannot_be_instantiated(self):
-        class _Incomplete(ModelSelectorPort):
-            pass  # complete() not implemented
-
-        with pytest.raises(TypeError):
-            _Incomplete()
-
-    def test_model_selector_port_complete_is_in_abstract_methods(self):
-        assert "complete" in ModelSelectorPort.__abstractmethods__
-
-    def test_model_selector_port_has_exactly_one_abstract_method(self):
-        assert len(ModelSelectorPort.__abstractmethods__) == 1
-
-    def test_concrete_selector_with_complete_instantiates(self):
-        selector = _ConcreteSelector()
-        assert isinstance(selector, ModelSelectorPort)
-
-    def test_concrete_selector_complete_returns_string(self):
-        selector = _ConcreteSelector()
-        result = selector.complete("What is the VAT rate?")
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-    def test_concrete_selector_complete_accepts_temperature_kwarg(self):
-        selector = _ConcreteSelector()
-        result = selector.complete("prompt", temperature=0.7)
-        assert isinstance(result, str)
-
-    def test_concrete_selector_complete_accepts_max_tokens_kwarg(self):
-        selector = _ConcreteSelector()
-        result = selector.complete("prompt", max_tokens=1024)
-        assert isinstance(result, str)
-
-    def test_concrete_selector_complete_default_temperature_is_zero(self):
-        sig = inspect.signature(ModelSelectorPort.complete)
-        assert sig.parameters["temperature"].default == 0.0
-
-    def test_concrete_selector_complete_default_max_tokens_is_512(self):
-        sig = inspect.signature(ModelSelectorPort.complete)
-        assert sig.parameters["max_tokens"].default == 512
 
 
 # ---------------------------------------------------------------------------
@@ -272,23 +205,12 @@ class TestDomainExceptionHierarchy:
 class TestPublicAPI:
     """All symbols must be importable from both their module and src.domain.ports."""
 
-    def test_model_selector_port_importable_from_own_module(self):
-        assert _ModelSelectorPortDirect is ModelSelectorPort
-
     def test_degraded_mode_port_importable_from_own_module(self):
         assert _DegradedModePortDirect is DegradedModePort
-
-    def test_model_selector_port_importable_from_domain_ports_package(self):
-        from src.domain.ports import ModelSelectorPort as _M
-        assert _M is ModelSelectorPort
 
     def test_degraded_mode_port_importable_from_domain_ports_package(self):
         from src.domain.ports import DegradedModePort as _D
         assert _D is DegradedModePort
-
-    def test_model_selector_port_in_module_all(self):
-        import src.domain.ports.model_selector_port as m
-        assert "ModelSelectorPort" in m.__all__
 
     def test_degraded_mode_port_in_module_all(self):
         import src.domain.ports.degraded_mode_port as m
@@ -299,10 +221,6 @@ class TestPublicAPI:
         for name in ("ERPRagError", "LLMUnavailableError",
                      "TenantFilterMissingError", "InvalidIntentError"):
             assert name in m.__all__, f"{name} missing from exceptions.__all__"
-
-    def test_model_selector_port_in_domain_ports_init_all(self):
-        import src.domain.ports as pkg
-        assert "ModelSelectorPort" in pkg.__all__
 
     def test_degraded_mode_port_in_domain_ports_init_all(self):
         import src.domain.ports as pkg

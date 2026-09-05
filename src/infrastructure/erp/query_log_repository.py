@@ -1,12 +1,14 @@
 """
 Query Log Repository — Sprint 4
-Records every ExecutionResult to MongoDB query_log collection.
+Records every ExecutionResult QueryExecutor produces.
 
-In test mode (no real MongoDB), uses an in-memory list.
+Only the in-memory sink exists. A MongoDB-backed one was written and never
+wired into the DI factory, so it is gone; making query logs durable is a
+wiring task, not a missing class.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Optional
 
 from src.observability.structured_logger import get_logger
@@ -45,22 +47,7 @@ class InMemoryQueryLogRepository:
         return len(self._log)
 
 
-class MongoQueryLogRepository:
-    """MongoDB-backed query log. Used in production."""
-
-    def __init__(self, collection) -> None:
-        self._col = collection
-
-    def save(self, entry: QueryLogEntry) -> None:
-        try:
-            self._col.insert_one(asdict(entry))
-            logger.info("query_log.mongo_saved", query_id=entry.query_id)
-        except Exception as exc:
-            logger.error("query_log.mongo_save_failed", query_id=entry.query_id, error=str(exc))
-
-
 __all__ = [
     "QueryLogEntry",
     "InMemoryQueryLogRepository",
-    "MongoQueryLogRepository",
 ]

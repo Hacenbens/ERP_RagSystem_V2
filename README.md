@@ -75,7 +75,7 @@ File saved to local storage (ASSET_STORAGE_PATH)
 Celery ingest job dispatched (broker: Redis)
         │
         ▼
-Chunker → Embedder → MilvusVectorStore (upsert with tenant isolation)
+Chunker → Embedder → TenantCollectionVectorStore (one Milvus collection per tenant)
 ```
 
 ---

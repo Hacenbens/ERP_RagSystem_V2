@@ -16,6 +16,10 @@ Two defects kept Milvus from ever being usable:
 
 These run against real Milvus Lite files, not mocks — the bug was in what the
 database actually persisted.
+
+Both defects predate the move to per-tenant collections, so the tests now
+exercise TenantCollectionVectorStore: the guarantees are properties of the
+system, not of the class that happened to provide them first.
 """
 from __future__ import annotations
 
@@ -26,7 +30,10 @@ from collections.abc import Iterator
 
 import pytest
 
-from src.infrastructure.vector_store.milvus_vector_store import MilvusVectorStore
+from src.infrastructure.vector_store.milvus_provider import MilvusVectorDBProvider
+from src.infrastructure.vector_store.tenant_collection_vector_store import (
+    TenantCollectionVectorStore,
+)
 
 _DIM = 4
 
@@ -42,9 +49,18 @@ def db_path(tmp_path) -> str:
     return str(tmp_path / "erp_rag.db")
 
 
+def _open(uri: str) -> TenantCollectionVectorStore:
+    """Open a store the way the DI factory does: connect the provider first."""
+    provider = MilvusVectorDBProvider(
+        uri=uri, default_embedding_size=_DIM, auto_connect=False
+    )
+    provider.connect()
+    return TenantCollectionVectorStore(provider=provider, embedding_size=_DIM)
+
+
 @pytest.fixture()
-def store(db_path: str) -> Iterator[MilvusVectorStore]:
-    yield MilvusVectorStore(uri=db_path, dim=_DIM)
+def store(db_path: str) -> Iterator[TenantCollectionVectorStore]:
+    yield _open(db_path)
 
 
 class TestIdempotencySurvivesTheProcess:
@@ -54,7 +70,7 @@ class TestIdempotencySurvivesTheProcess:
         store.upsert("A1", "t1", _unit(0), "c1", "vat rules")
         store.save_vectors("A1", "t1", 1)
 
-        reopened = MilvusVectorStore(uri=db_path, dim=_DIM)
+        reopened = _open(db_path)
         assert reopened.has_vectors("A1", "t1") is True
         assert reopened.count("A1", "t1") == 1
 
@@ -62,7 +78,7 @@ class TestIdempotencySurvivesTheProcess:
         store.upsert("A1", "t1", _unit(0), "c1", "vat rules")
         store.save_vectors("A1", "t1", 1)
 
-        reopened = MilvusVectorStore(uri=db_path, dim=_DIM)
+        reopened = _open(db_path)
         hits = reopened.search_similar(query_embedding=_unit(0), k=5, tenant_id="t1")
         assert [h.content for h in hits] == ["vat rules"]
 
@@ -191,58 +207,45 @@ class TestAgainstAMilvusServer:
     """
 
     @pytest.fixture()
-    def collection(self) -> Iterator[str]:
+    def tenant(self) -> Iterator[str]:
+        """A tenant nobody else uses — its collections are its own."""
         import uuid
 
         name = f"test_{uuid.uuid4().hex[:10]}"
         yield name
         try:
-            MilvusVectorStore(
-                uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=name
-            ).drop()
+            _open(MILVUS_SERVER_URI).drop_tenant(name)
         except Exception:  # noqa: BLE001 — cleanup must not fail the test
             pass
 
-    def test_a_second_client_sees_the_vectors(self, collection):
-        writer = MilvusVectorStore(
-            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
-        )
-        writer.upsert("A1", "t1", _unit(0), "c1", "vat rules")
-        writer.save_vectors("A1", "t1", 1)
+    def test_a_second_client_sees_the_vectors(self, tenant):
+        writer = _open(MILVUS_SERVER_URI)
+        writer.upsert("A1", tenant, _unit(0), "c1", "vat rules")
+        writer.save_vectors("A1", tenant, 1)
 
-        reader = MilvusVectorStore(
-            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
-        )
-        assert len(reader.search_similar(_unit(0), 5, "t1")) == 1
+        reader = _open(MILVUS_SERVER_URI)
+        assert len(reader.search_similar(_unit(0), 5, tenant)) == 1
 
-    def test_a_second_client_sees_the_completion_marker(self, collection):
+    def test_a_second_client_sees_the_completion_marker(self, tenant):
         """The bug the server exposed: searchable vectors, invisible marker.
 
         Left unfixed, the worker would re-embed an asset it had just finished
         because has_vectors() answered False from a stale view.
         """
-        writer = MilvusVectorStore(
-            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
-        )
-        writer.upsert("A1", "t1", _unit(0), "c1", "vat rules")
-        writer.save_vectors("A1", "t1", 1)
+        writer = _open(MILVUS_SERVER_URI)
+        writer.upsert("A1", tenant, _unit(0), "c1", "vat rules")
+        writer.save_vectors("A1", tenant, 1)
 
-        reader = MilvusVectorStore(
-            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
-        )
-        assert reader.has_vectors("A1", "t1") is True
-        assert reader.count("A1", "t1") == 1
+        reader = _open(MILVUS_SERVER_URI)
+        assert reader.has_vectors("A1", tenant) is True
+        assert reader.count("A1", tenant) == 1
 
-    def test_tenant_scoping_holds_on_the_server(self, collection):
-        writer = MilvusVectorStore(
-            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
-        )
-        writer.upsert("A1", "t1", _unit(0), "c1", "vat rules")
-        writer.save_vectors("A1", "t1", 1)
+    def test_tenant_scoping_holds_on_the_server(self, tenant):
+        writer = _open(MILVUS_SERVER_URI)
+        writer.upsert("A1", tenant, _unit(0), "c1", "vat rules")
+        writer.save_vectors("A1", tenant, 1)
 
-        reader = MilvusVectorStore(
-            uri=MILVUS_SERVER_URI, dim=_DIM, collection_name=collection
-        )
+        reader = _open(MILVUS_SERVER_URI)
         assert reader.search_similar(_unit(0), 5, "other-tenant") == []
 
     def test_the_factory_accepts_a_server_uri(self, monkeypatch):
@@ -250,4 +253,4 @@ class TestAgainstAMilvusServer:
 
         monkeypatch.setenv("MILVUS_DB_URI", MILVUS_SERVER_URI)
 
-        assert isinstance(_select_vector_store(dim=_DIM), MilvusVectorStore)
+        assert isinstance(_select_vector_store(dim=_DIM), TenantCollectionVectorStore)

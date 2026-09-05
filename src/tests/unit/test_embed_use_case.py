@@ -1,6 +1,6 @@
 """
 Unit tests — Sprint 7 Task 19 (refactored from Sprint 6 Task 4)
-Covers: EmbedResult, InMemoryVectorStore, MongoVectorStore (mocked), EmbedAssetUseCase (new signature)
+Covers: EmbedResult, InMemoryVectorStore, EmbedAssetUseCase (new signature)
 
 All tests are pure in-memory — no Celery, no MongoDB, no I/O.
 """
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,7 +18,6 @@ from src.domain.embed_result import EmbedResult
 from src.domain.ports.embedding_port import EmbeddingPort
 from src.infrastructure.persistence.chunk_store import InMemoryChunkStore
 from src.infrastructure.vector_store.in_memory_vector_store import InMemoryVectorStore
-from src.infrastructure.vector_store.mongo_vector_store import MongoVectorStore
 from src.use_cases.tasks.embed_asset_use_case import (
     AssetAlreadyEmbeddedError,
     EmbedAssetUseCase,
@@ -153,74 +151,6 @@ class TestInMemoryVectorStore:
         store.save_vectors("asset-2", TENANT_ID, 9)
         assert store.count("asset-1", TENANT_ID) == 2
         assert store.count("asset-2", TENANT_ID) == 9
-
-
-# ---------------------------------------------------------------------------
-# MongoVectorStore — mocked collection
-# ---------------------------------------------------------------------------
-
-class TestMongoVectorStore:
-    def _make_store(self) -> tuple[MongoVectorStore, MagicMock]:
-        collection = MagicMock()
-        return MongoVectorStore(collection), collection
-
-    def test_has_vectors_returns_true_when_document_exists(self):
-        store, col = self._make_store()
-        col.count_documents.return_value = 1
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is True
-        col.count_documents.assert_called_once_with(
-            {"asset_id": ASSET_ID, "tenant_id": TENANT_ID}, limit=1
-        )
-
-    def test_has_vectors_returns_false_when_no_document(self):
-        store, col = self._make_store()
-        col.count_documents.return_value = 0
-        assert store.has_vectors(ASSET_ID, TENANT_ID) is False
-
-    def test_save_vectors_calls_update_one_with_upsert(self):
-        store, col = self._make_store()
-        store.save_vectors(ASSET_ID, TENANT_ID, 7)
-        col.update_one.assert_called_once()
-        call_kwargs = col.update_one.call_args
-        assert call_kwargs.kwargs["upsert"] is True
-
-    def test_save_vectors_filter_matches_asset_and_tenant(self):
-        store, col = self._make_store()
-        store.save_vectors(ASSET_ID, TENANT_ID, 7)
-        filter_doc = col.update_one.call_args.args[0]
-        assert filter_doc == {"asset_id": ASSET_ID, "tenant_id": TENANT_ID}
-
-    def test_save_vectors_sets_correct_vector_count(self):
-        store, col = self._make_store()
-        store.save_vectors(ASSET_ID, TENANT_ID, 7)
-        update_doc = col.update_one.call_args.args[1]
-        assert update_doc["$set"]["vector_count"] == 7
-
-    def test_save_vectors_sets_embedded_at_timestamp(self):
-        store, col = self._make_store()
-        store.save_vectors(ASSET_ID, TENANT_ID, 3)
-        update_doc = col.update_one.call_args.args[1]
-        assert "embedded_at" in update_doc["$set"]
-        assert "T" in update_doc["$set"]["embedded_at"]
-
-    def test_count_returns_vector_count_from_document(self):
-        store, col = self._make_store()
-        col.find_one.return_value = {"vector_count": 14}
-        assert store.count(ASSET_ID, TENANT_ID) == 14
-
-    def test_count_returns_zero_when_no_document(self):
-        store, col = self._make_store()
-        col.find_one.return_value = None
-        assert store.count(ASSET_ID, TENANT_ID) == 0
-
-    def test_count_queries_correct_fields(self):
-        store, col = self._make_store()
-        col.find_one.return_value = {"vector_count": 5}
-        store.count(ASSET_ID, TENANT_ID)
-        col.find_one.assert_called_once_with(
-            {"asset_id": ASSET_ID, "tenant_id": TENANT_ID},
-            {"vector_count": 1},
-        )
 
 
 # ---------------------------------------------------------------------------
